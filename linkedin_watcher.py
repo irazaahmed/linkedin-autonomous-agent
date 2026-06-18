@@ -547,6 +547,7 @@ async def run():
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
 
         targets = build_target_urls()
+        random.shuffle(targets)  # order varies run to run so a long hashtag list doesn't always favor the first few
         if targets == [LINKEDIN_FEED]:
             print("[*] Target: home feed (no TARGET_HASHTAGS set).\n")
         else:

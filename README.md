@@ -230,9 +230,11 @@ comment before this filter existed.
 
 By default the agent scans the algorithmic home feed. Set `TARGET_HASHTAGS`
 in `.env` (comma-separated, e.g. `artificialintelligence,automation`) to
-scan specific hashtag feeds instead — the agent visits each one in order,
-applies the same scan → relevance filter → react → comment pipeline, and
-moves to the next hashtag once `MAX_POSTS` is reached or a hashtag runs out
+scan specific hashtag feeds instead. The list ships with ~20 AI/automation/
+founder-relevant tags by default. The order is shuffled every run (so a long
+list doesn't always favor the first couple of tags), and the agent applies
+the same scan → relevance filter → react → comment pipeline to each one,
+moving to the next hashtag once `MAX_POSTS` is reached or a hashtag runs out
 of new posts. Each hashtag gets its own scroll budget so one popular tag
 can't starve the others.
 

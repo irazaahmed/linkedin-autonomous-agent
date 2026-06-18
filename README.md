@@ -215,10 +215,19 @@ cleaning/reaction-picking/fingerprinting (`linkedin_watcher.py`).
   portfolio piece, not a product — use on your own account, at your own
   discretion and risk.
 
+## Relevance filter
+
+Before generating a comment, the post is checked against a deliberately broad
+keyword set (`RELEVANCE_KEYWORDS` in `linkedin_watcher.py`) spanning AI/automation,
+business growth, future of work, and general celebration/achievement posts
+(milestones, promotions, launches — engaging with those is normal LinkedIn
+behavior regardless of topic). If nothing matches, the agent still reacts but
+skips the comment — saving an LLM call and avoiding off-topic comments under
+the persona's name, like the React-testing-course post that got an AI-persona
+comment before this filter existed.
+
 ## What's next
 
-- Relevance filter so the agent skips posts outside the persona's actual
-  expertise instead of commenting on anything that scrolls by
 - Targeted engagement (specific hashtags/people) instead of whatever the
   algorithmic feed surfaces
 - A feedback loop that revisits posted comments later to track which ones

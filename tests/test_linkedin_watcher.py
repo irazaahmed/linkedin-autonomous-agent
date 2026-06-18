@@ -1,4 +1,4 @@
-from linkedin_watcher import clean_post_text, pick_reaction, post_fingerprint
+from linkedin_watcher import clean_post_text, pick_reaction, post_fingerprint, is_relevant_post
 
 
 def test_clean_post_text_strips_ui_noise():
@@ -43,3 +43,18 @@ def test_post_fingerprint_stable_for_whitespace_and_case_differences():
 
 def test_post_fingerprint_differs_for_different_text():
     assert post_fingerprint("Post A content here") != post_fingerprint("Post B content here")
+
+
+def test_is_relevant_post_accepts_ai_automation_topics():
+    text = "We just rolled out an AI agent to automate our internal workflow approvals."
+    assert is_relevant_post(text)
+
+
+def test_is_relevant_post_accepts_celebration_achievement():
+    text = "Thrilled to announce I just crossed 3,000 followers on this platform!"
+    assert is_relevant_post(text)
+
+
+def test_is_relevant_post_rejects_unrelated_course_post():
+    text = "Popular course on LinkedIn Learning: Testing React Applications with Jest and React Testing Library."
+    assert not is_relevant_post(text)

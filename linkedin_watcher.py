@@ -177,6 +177,44 @@ def pick_reaction(text: str) -> str:
     return best
 
 
+# Comment ke liye "relevant" categories — persona ke expertise + generic
+# celebration/achievement posts (LinkedIn pe inko engage karna normal hai,
+# topic se related ho ya na ho). List intentionally broad rakhi hai taake
+# acche posts galti se skip na hon — kam matches ka risk zyada hai.
+RELEVANCE_KEYWORDS = {
+    "ai_automation": [
+        "ai", "artificial intelligence", "automation", "agent", "agentic",
+        "genai", "generative ai", "llm", "machine learning", "chatgpt",
+        "claude", "copilot", "rpa", "workflow", "no-code", "low-code",
+        "n8n", "zapier", "make.com", "digital transformation", "ai-native",
+        "ai tool", "ai adoption", "ai agent", "autonomous",
+    ],
+    "business_growth": [
+        "startup", "founder", "ceo", "fundrais", "scaling", "scale up",
+        "roi", "revenue", "growth", "business strategy", "leadership",
+        "entrepreneur", "venture", "investor", "pitch deck", "go-to-market",
+        "smb", "sme", "enterprise",
+    ],
+    "future_of_work": [
+        "future of work", "remote work", "hybrid work", "hiring", "talent",
+        "workplace", "human-ai", "reskilling", "upskilling", "workforce",
+    ],
+    "celebration_achievement": REACTION_KEYWORDS["celebrate"],
+}
+
+
+def is_relevant_post(text: str) -> bool:
+    """Persona ke expertise (AI/automation/business growth/future of work) ya
+    celebration/achievement post — inhi par comment generate karte hain.
+    Baaki posts par sirf reaction milta hai, comment skip ho jata hai."""
+    low = text.lower()
+    return any(
+        kw in low
+        for keywords in RELEVANCE_KEYWORDS.values()
+        for kw in keywords
+    )
+
+
 def log_result(post_id: str, preview: str, comment: str, success: bool,
                 reaction: str | None = None, reacted: bool | None = None):
     LOGS_DIR.mkdir(exist_ok=True)
@@ -555,6 +593,12 @@ async def run():
                         "commented": False,
                     }
                     save_engaged(engaged)
+
+                if not is_relevant_post(text):
+                    print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
+                    if processed < MAX_POSTS:
+                        await human_gap()
+                    continue
 
                 print(f"  Generating comment...")
                 loop = asyncio.get_event_loop()

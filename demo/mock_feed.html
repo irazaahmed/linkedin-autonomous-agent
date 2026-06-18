@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Demo Feed (Mock Environment)</title>
+<style>
+  body { background: #eef1f4; font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; }
+  .banner {
+    background: #b91c1c; color: #fff; text-align: center; padding: 10px;
+    font-weight: 600; font-size: 14px; letter-spacing: 0.3px;
+  }
+  .topbar { background: #1f2937; color: #fff; padding: 14px 24px; font-weight: 700; font-size: 18px; }
+  .feed { max-width: 640px; margin: 24px auto; display: flex; flex-direction: column; gap: 16px; }
+  .post-card {
+    background: #fff; border-radius: 10px; padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12); min-height: 540px; width: 600px;
+  }
+  .author { font-weight: 600; font-size: 15px; color: #1f2937; }
+  .headline { font-size: 13px; color: #6b7280; margin-bottom: 10px; }
+  .post-text { font-size: 14px; color: #111827; line-height: 1.5; margin-bottom: 14px; white-space: pre-wrap; }
+  .post-image {
+    height: 260px; border-radius: 8px; margin-bottom: 10px;
+    background: linear-gradient(135deg, #dbeafe, #e0e7ff);
+  }
+  .stats-row { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+  .actions { display: flex; gap: 10px; border-top: 1px solid #e5e7eb; padding-top: 10px; position: relative; }
+  .actions button {
+    background: none; border: none; color: #4b5563; font-size: 13px; font-weight: 600;
+    padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .actions button:hover { background: #f3f4f6; }
+  .reaction-picker {
+    display: none; position: absolute; top: -54px; left: 0; background: #fff;
+    border: 1px solid #e5e7eb; border-radius: 24px; padding: 8px 10px; gap: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .reaction-picker button { background: none; border: none; font-size: 13px; cursor: pointer; padding: 4px 8px; }
+  .reaction-picker button:hover { transform: scale(1.15); }
+  .comment-box { display: none; margin-top: 12px; }
+  .comment-input {
+    border: 1px solid #d1d5db; border-radius: 18px; padding: 10px 14px;
+    min-height: 20px; font-size: 13px; outline: none;
+  }
+  .comment-input:focus { border-color: #2563eb; }
+  .submit-comment-btn {
+    margin-top: 8px; background: #2563eb; color: #fff; border: none;
+    border-radius: 16px; padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .posted-comments { margin-top: 10px; }
+  .posted-comment {
+    background: #f3f4f6; border-radius: 8px; padding: 8px 12px; font-size: 13px;
+    margin-top: 8px; color: #111827;
+  }
+  .liked { color: #2563eb !important; }
+</style>
+</head>
+<body>
+  <div class="banner">DEMO MODE — Mock Feed, not real LinkedIn — recorded to show the agent's real decision logic</div>
+  <div class="topbar">linkedin-autonomous-agent — demo feed</div>
+
+  <div class="feed" id="feed">
+
+    <div class="post-card">
+      <div class="author">Sara Khan</div>
+      <div class="headline">Founder, BrightOps AI</div>
+      <div class="post-text">Excited to announce the launch of our new AI agent that automates customer support workflows end to end. It took us four months to get the handoff between the agent and our human team right.</div>
+      <div class="post-image"></div>
+      <div class="stats-row">48 reactions &middot; 12 comments</div>
+      <div class="actions">
+        <button class="like-btn" aria-label="Reaction button state: no reaction">Like</button>
+        <div class="reaction-picker">
+          <button>Like</button><button>Celebrate</button><button>Support</button>
+          <button>Love</button><button>Insightful</button><button>Funny</button>
+        </div>
+        <button class="comment-btn">Comment</button>
+        <button>Share</button>
+        <button>Send</button>
+      </div>
+      <div class="comment-box">
+        <div class="comment-input" contenteditable="true" role="textbox"></div>
+        <button class="submit-comment-btn">Comment</button>
+      </div>
+      <div class="posted-comments"></div>
+    </div>
+
+    <div class="post-card">
+      <div class="author">Daniyal Querishi</div>
+      <div class="headline">Co-Founder, LedgerLoop</div>
+      <div class="post-text">We just hit a major milestone — closed our fundraising round and crossed 50 paying customers this quarter as a startup. Grateful to the team that made the late nights worth it.</div>
+      <div class="post-image"></div>
+      <div class="stats-row">48 reactions &middot; 12 comments</div>
+      <div class="actions">
+        <button class="like-btn" aria-label="Reaction button state: no reaction">Like</button>
+        <div class="reaction-picker">
+          <button>Like</button><button>Celebrate</button><button>Support</button>
+          <button>Love</button><button>Insightful</button><button>Funny</button>
+        </div>
+        <button class="comment-btn">Comment</button>
+        <button>Share</button>
+        <button>Send</button>
+      </div>
+      <div class="comment-box">
+        <div class="comment-input" contenteditable="true" role="textbox"></div>
+        <button class="submit-comment-btn">Comment</button>
+      </div>
+      <div class="posted-comments"></div>
+    </div>
+
+    <div class="post-card">
+      <div class="author">Imran Toor</div>
+      <div class="headline">Home cook & weekend baker</div>
+      <div class="post-text">Tried a new pasta recipe this weekend and it turned out amazing! Sharing the recipe below for anyone who wants to try cooking it at home this week — simple ingredients, big flavor.</div>
+      <div class="post-image"></div>
+      <div class="stats-row">48 reactions &middot; 12 comments</div>
+      <div class="actions">
+        <button class="like-btn" aria-label="Reaction button state: no reaction">Like</button>
+        <div class="reaction-picker">
+          <button>Like</button><button>Celebrate</button><button>Support</button>
+          <button>Love</button><button>Insightful</button><button>Funny</button>
+        </div>
+        <button class="comment-btn">Comment</button>
+        <button>Share</button>
+        <button>Send</button>
+      </div>
+      <div class="comment-box">
+        <div class="comment-input" contenteditable="true" role="textbox"></div>
+        <button class="submit-comment-btn">Comment</button>
+      </div>
+      <div class="posted-comments"></div>
+    </div>
+
+    <div class="post-card">
+      <div class="author">Hira Aslam</div>
+      <div class="headline">Ops Lead, scaling mid-market teams</div>
+      <div class="post-text">New research shows most companies underestimate the ROI of workflow automation. Our analysis found a clear framework for prioritizing which processes to automate first instead of automating everything at once.</div>
+      <div class="post-image"></div>
+      <div class="stats-row">48 reactions &middot; 12 comments</div>
+      <div class="actions">
+        <button class="like-btn" aria-label="Reaction button state: no reaction">Like</button>
+        <div class="reaction-picker">
+          <button>Like</button><button>Celebrate</button><button>Support</button>
+          <button>Love</button><button>Insightful</button><button>Funny</button>
+        </div>
+        <button class="comment-btn">Comment</button>
+        <button>Share</button>
+        <button>Send</button>
+      </div>
+      <div class="comment-box">
+        <div class="comment-input" contenteditable="true" role="textbox"></div>
+        <button class="submit-comment-btn">Comment</button>
+      </div>
+      <div class="posted-comments"></div>
+    </div>
+
+  </div>
+
+<script>
+  document.querySelectorAll('.post-card').forEach(card => {
+    const likeBtn = card.querySelector('.like-btn');
+    const picker = card.querySelector('.reaction-picker');
+    const commentBtn = card.querySelector('.comment-btn');
+    const commentBox = card.querySelector('.comment-box');
+    const commentInput = card.querySelector('.comment-input');
+    const submitBtn = card.querySelector('.submit-comment-btn');
+    const postedComments = card.querySelector('.posted-comments');
+
+    let hideTimer = null;
+    const showPicker = () => { clearTimeout(hideTimer); picker.style.display = 'flex'; };
+    const scheduleHide = () => { hideTimer = setTimeout(() => picker.style.display = 'none', 400); };
+
+    likeBtn.addEventListener('mouseenter', showPicker);
+    likeBtn.addEventListener('mouseleave', scheduleHide);
+    picker.addEventListener('mouseenter', showPicker);
+    picker.addEventListener('mouseleave', scheduleHide);
+
+    likeBtn.addEventListener('click', () => {
+      likeBtn.setAttribute('aria-label', 'Reaction button state: liked');
+      likeBtn.textContent = 'Liked';
+      likeBtn.classList.add('liked');
+    });
+
+    picker.querySelectorAll('button').forEach(optBtn => {
+      optBtn.addEventListener('click', () => {
+        const name = optBtn.textContent.trim();
+        likeBtn.setAttribute('aria-label', 'Reaction button state: ' + name.toLowerCase());
+        likeBtn.textContent = name;
+        likeBtn.classList.add('liked');
+        picker.style.display = 'none';
+      });
+    });
+
+    commentBtn.addEventListener('click', () => {
+      commentBox.style.display = 'block';
+      commentInput.focus();
+    });
+
+    submitBtn.addEventListener('click', () => {
+      const text = commentInput.innerText.trim();
+      if (!text) return;
+      const entry = document.createElement('div');
+      entry.className = 'posted-comment';
+      entry.textContent = text;
+      postedComments.appendChild(entry);
+      commentInput.innerText = '';
+      commentBox.style.display = 'none';
+    });
+  });
+</script>
+</body>
+</html>

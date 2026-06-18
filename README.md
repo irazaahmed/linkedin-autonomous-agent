@@ -204,6 +204,20 @@ Covers the pure logic that's safe to unit test without a browser or live API
 calls: comment extraction/validation (`comment_generator.py`) and post
 cleaning/reaction-picking/fingerprinting (`linkedin_watcher.py`).
 
+## Demo recording (no real LinkedIn involved)
+
+```bash
+python demo/record_demo.py
+```
+
+Drives the actual production functions (`get_posts_from_page`, `pick_reaction`,
+`is_relevant_post`, `react_to_post`, `click_and_comment`, real Groq calls)
+against a local mock feed (`demo/mock_feed.html`) instead of linkedin.com, and
+records the session to `demo/recording/` via Playwright's built-in video
+capture. Same decision logic, zero real LinkedIn data, zero ToS exposure —
+used to produce a demo video without touching a real account or anyone
+else's posts.
+
 ## Responsible-use notes
 
 - Manual trigger only, capped at a small post count per run — no scheduler,

@@ -166,7 +166,7 @@ skip the login step entirely.
 | Key | Default | Meaning |
 |---|---|---|
 | `GROQ_API_KEY` | — | Required. Free tier at console.groq.com |
-| `MAX_POSTS` | `3` | Posts to react+comment on per run |
+| `MAX_POSTS` | `5` | Posts to react+comment on per run |
 | `MIN_GAP_SECONDS` / `MAX_GAP_SECONDS` | `50` / `90` | Randomized delay between posts |
 | `HEADLESS` | `false` | Run Chrome without a visible window |
 

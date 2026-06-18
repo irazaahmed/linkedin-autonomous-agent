@@ -16,7 +16,7 @@ load_dotenv()
 _executor = ThreadPoolExecutor(max_workers=1)
 
 # ── Config (tunable via .env, sensible defaults if unset) ─────────────────────
-MAX_POSTS        = int(os.getenv("MAX_POSTS", "3"))
+MAX_POSTS        = int(os.getenv("MAX_POSTS", "5"))
 MIN_GAP_SECONDS  = float(os.getenv("MIN_GAP_SECONDS", "50"))
 MAX_GAP_SECONDS  = float(os.getenv("MAX_GAP_SECONDS", "90"))
 HEADLESS         = os.getenv("HEADLESS", "false").strip().lower() == "true"
@@ -535,7 +535,10 @@ async def run():
         processed   = 0
         seen_ids    = set()
         scroll_num  = 0
-        max_scrolls = 25
+        # Relevance filter + dedup ke baad har post comment nahi banta — is liye
+        # scroll budget MAX_POSTS ke hisab se scale karte hain, fixed 25 kaafi
+        # nahi raha jab MAX_POSTS barha do.
+        max_scrolls = max(25, MAX_POSTS * 8)
         engaged     = load_engaged()
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
 

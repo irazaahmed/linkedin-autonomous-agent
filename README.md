@@ -226,9 +226,17 @@ skips the comment — saving an LLM call and avoiding off-topic comments under
 the persona's name, like the React-testing-course post that got an AI-persona
 comment before this filter existed.
 
+## Targeted engagement
+
+By default the agent scans the algorithmic home feed. Set `TARGET_HASHTAGS`
+in `.env` (comma-separated, e.g. `artificialintelligence,automation`) to
+scan specific hashtag feeds instead — the agent visits each one in order,
+applies the same scan → relevance filter → react → comment pipeline, and
+moves to the next hashtag once `MAX_POSTS` is reached or a hashtag runs out
+of new posts. Each hashtag gets its own scroll budget so one popular tag
+can't starve the others.
+
 ## What's next
 
-- Targeted engagement (specific hashtags/people) instead of whatever the
-  algorithmic feed surfaces
 - A feedback loop that revisits posted comments later to track which ones
   got engagement, closing the loop on "what actually works"

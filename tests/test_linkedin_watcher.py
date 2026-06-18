@@ -1,4 +1,11 @@
-from linkedin_watcher import clean_post_text, pick_reaction, post_fingerprint, is_relevant_post
+from linkedin_watcher import (
+    LINKEDIN_FEED,
+    build_target_urls,
+    clean_post_text,
+    is_relevant_post,
+    pick_reaction,
+    post_fingerprint,
+)
 
 
 def test_clean_post_text_strips_ui_noise():
@@ -58,3 +65,18 @@ def test_is_relevant_post_accepts_celebration_achievement():
 def test_is_relevant_post_rejects_unrelated_course_post():
     text = "Popular course on LinkedIn Learning: Testing React Applications with Jest and React Testing Library."
     assert not is_relevant_post(text)
+
+
+def test_build_target_urls_defaults_to_home_feed(monkeypatch):
+    monkeypatch.delenv("TARGET_HASHTAGS", raising=False)
+    assert build_target_urls() == [LINKEDIN_FEED]
+
+
+def test_build_target_urls_builds_hashtag_feeds(monkeypatch):
+    monkeypatch.setenv("TARGET_HASHTAGS", "#AI, automation , futureOfWork")
+    urls = build_target_urls()
+    assert urls == [
+        "https://www.linkedin.com/feed/hashtag/AI/",
+        "https://www.linkedin.com/feed/hashtag/automation/",
+        "https://www.linkedin.com/feed/hashtag/futureOfWork/",
+    ]

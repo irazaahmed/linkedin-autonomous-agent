@@ -462,6 +462,17 @@ async def human_gap():
     await asyncio.sleep(delay)
 
 
+def build_target_urls() -> list[str]:
+    """TARGET_HASHTAGS (.env, comma-separated, # optional) se hashtag feed
+    URLs banata hai — taake bot algorithmic home feed ke bajaye specific
+    topics target kar sake. Unset/empty ho to purana behavior: sirf home feed."""
+    raw = os.getenv("TARGET_HASHTAGS", "").strip()
+    tags = [t.strip().lstrip("#") for t in raw.split(",") if t.strip()]
+    if not tags:
+        return [LINKEDIN_FEED]
+    return [f"https://www.linkedin.com/feed/hashtag/{t}/" for t in tags]
+
+
 async def run():
     SESSION_DIR.mkdir(exist_ok=True)
     LOGS_DIR.mkdir(exist_ok=True)
@@ -530,110 +541,130 @@ async def run():
         await page.evaluate("window.scrollBy(0, -400)")
         await asyncio.sleep(2)
 
-        print("[*] Scanning shuru...\n")
-
         processed   = 0
         seen_ids    = set()
-        scroll_num  = 0
-        # Relevance filter + dedup ke baad har post comment nahi banta — is liye
-        # scroll budget MAX_POSTS ke hisab se scale karte hain, fixed 25 kaafi
-        # nahi raha jab MAX_POSTS barha do.
-        max_scrolls = max(25, MAX_POSTS * 8)
         engaged     = load_engaged()
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
 
-        while processed < MAX_POSTS and scroll_num < max_scrolls:
+        targets = build_target_urls()
+        if targets == [LINKEDIN_FEED]:
+            print("[*] Target: home feed (no TARGET_HASHTAGS set).\n")
+        else:
+            print(f"[*] Targeted hashtags: {', '.join(t.rstrip('/').rsplit('/', 1)[-1] for t in targets)}\n")
 
-            if not is_on_feed(page.url):
-                await page.goto(LINKEDIN_FEED, wait_until="domcontentloaded", timeout=60000)
+        for target_url in targets:
+            if processed >= MAX_POSTS:
+                break
+
+            if not page.url.rstrip("/").startswith(target_url.rstrip("/")):
+                print(f"[*] Navigating to {target_url}")
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(4)
+                await page.evaluate("window.scrollBy(0, 400)")
+                await asyncio.sleep(2)
+                await page.evaluate("window.scrollBy(0, -400)")
+                await asyncio.sleep(2)
 
-            try:
-                posts = await get_posts_from_page(page)
-            except Exception as e:
-                print(f"  [!] Scan error: {e}")
-                await asyncio.sleep(3)
-                scroll_num += 1
-                continue
+            print(f"[*] Scanning shuru: {target_url}\n")
+            scroll_num = 0
+            # Relevance filter + dedup ke baad har post comment nahi banta — is
+            # liye scroll budget MAX_POSTS ke hisab se scale karte hain, fixed
+            # 25 kaafi nahi raha jab MAX_POSTS barha do. Har target ko apna
+            # fresh budget milta hai taake pehla hashtag baaki sabka budget na khaye.
+            max_scrolls = max(15, MAX_POSTS * 8)
 
-            if scroll_num == 0:
-                print(f"[*] {len(posts)} posts mile is scroll mein.\n")
+            while processed < MAX_POSTS and scroll_num < max_scrolls:
 
-            for post in posts:
-                if processed >= MAX_POSTS:
-                    break
+                if not is_on_feed(page.url):
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                    await asyncio.sleep(4)
 
-                post_id = post.get("id", "")
-                if not post_id or post_id in seen_ids:
-                    continue
-                seen_ids.add(post_id)
-
-                if post.get("sponsored"):
-                    print("  [SKIP] Sponsored post.")
-                    continue
-
-                text = clean_post_text(post.get("text", ""))
-                if len(text) < 60:
-                    continue
-
-                fp = post_fingerprint(text)
-                if fp in engaged:
-                    print("  [SKIP] Pehle hi kabhi engage ho chuke is post pe.")
-                    continue
-
-                print(f"[POST {processed + 1}/{MAX_POSTS}]")
-                print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
-
-                reaction = pick_reaction(text)
-                print(f"  Reaction : {reaction}")
-                reacted = await react_to_post(page, post_id, reaction)
-                print(f"  {'[OK]' if reacted else '[WARN]'} Reaction {'de diya' if reacted else 'nahi de paya'}.")
-
-                if reacted:
-                    engaged[fp] = {
-                        "timestamp": datetime.now().isoformat(),
-                        "preview": text[:80],
-                        "commented": False,
-                    }
-                    save_engaged(engaged)
-
-                if not is_relevant_post(text):
-                    print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
-                    if processed < MAX_POSTS:
-                        await human_gap()
-                    continue
-
-                print(f"  Generating comment...")
-                loop = asyncio.get_event_loop()
                 try:
-                    comment = await loop.run_in_executor(_executor, generate_comment, text)
+                    posts = await get_posts_from_page(page)
                 except Exception as e:
-                    print(f"  [SKIP] Comment generate nahi hua: {e}\n")
-                    # Reaction to pehle hi de di — agla post bhi gap se hi karo
+                    print(f"  [!] Scan error: {e}")
+                    await asyncio.sleep(3)
+                    scroll_num += 1
+                    continue
+
+                if scroll_num == 0:
+                    print(f"[*] {len(posts)} posts mile is scroll mein.\n")
+
+                for post in posts:
+                    if processed >= MAX_POSTS:
+                        break
+
+                    post_id = post.get("id", "")
+                    if not post_id or post_id in seen_ids:
+                        continue
+                    seen_ids.add(post_id)
+
+                    if post.get("sponsored"):
+                        print("  [SKIP] Sponsored post.")
+                        continue
+
+                    text = clean_post_text(post.get("text", ""))
+                    if len(text) < 60:
+                        continue
+
+                    fp = post_fingerprint(text)
+                    if fp in engaged:
+                        print("  [SKIP] Pehle hi kabhi engage ho chuke is post pe.")
+                        continue
+
+                    print(f"[POST {processed + 1}/{MAX_POSTS}]")
+                    print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
+
+                    reaction = pick_reaction(text)
+                    print(f"  Reaction : {reaction}")
+                    reacted = await react_to_post(page, post_id, reaction)
+                    print(f"  {'[OK]' if reacted else '[WARN]'} Reaction {'de diya' if reacted else 'nahi de paya'}.")
+
+                    if reacted:
+                        engaged[fp] = {
+                            "timestamp": datetime.now().isoformat(),
+                            "preview": text[:80],
+                            "commented": False,
+                        }
+                        save_engaged(engaged)
+
+                    if not is_relevant_post(text):
+                        print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
+                        if processed < MAX_POSTS:
+                            await human_gap()
+                        continue
+
+                    print(f"  Generating comment...")
+                    loop = asyncio.get_event_loop()
+                    try:
+                        comment = await loop.run_in_executor(_executor, generate_comment, text)
+                    except Exception as e:
+                        print(f"  [SKIP] Comment generate nahi hua: {e}\n")
+                        # Reaction to pehle hi de di — agla post bhi gap se hi karo
+                        if processed < MAX_POSTS:
+                            await human_gap()
+                        continue
+                    print(f"  Comment  : {comment}")
+                    print(f"  Posting...")
+
+                    success = await click_and_comment(page, post_id, comment)
+                    log_result(post_id, text, comment, success, reaction, reacted)
+
+                    if success:
+                        processed += 1
+                        if fp in engaged:
+                            engaged[fp]["commented"] = True
+                            save_engaged(engaged)
+                        print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
+                    else:
+                        print("  [FAIL] Next post pe ja raha hun.\n")
+
                     if processed < MAX_POSTS:
                         await human_gap()
-                    continue
-                print(f"  Comment  : {comment}")
-                print(f"  Posting...")
 
-                success = await click_and_comment(page, post_id, comment)
-                log_result(post_id, text, comment, success, reaction, reacted)
-
-                if success:
-                    processed += 1
-                    if fp in engaged:
-                        engaged[fp]["commented"] = True
-                        save_engaged(engaged)
-                    print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
-                else:
-                    print("  [FAIL] Next post pe ja raha hun.\n")
-
-                if processed < MAX_POSTS:
-                    await human_gap()
-
-            await page.evaluate("window.scrollBy(0, 900)")
-            await asyncio.sleep(random.uniform(3, 5))
-            scroll_num += 1
+                await page.evaluate("window.scrollBy(0, 900)")
+                await asyncio.sleep(random.uniform(3, 5))
+                scroll_num += 1
 
         print("=" * 55)
         print(f"  Complete! Comments: {processed}/{MAX_POSTS}")

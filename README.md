@@ -1,0 +1,225 @@
+# LinkedIn Autonomous Commenter
+
+An autonomous agent that logs into LinkedIn with a real Chrome session, reads
+posts in the feed, picks a contextually appropriate reaction, and writes a
+persona-consistent comment using an LLM — all paced to look like genuine human
+engagement instead of a bot burst.
+
+Built as the "Watcher" component of a [Personal AI Employee](#why-this-exists)
+system: a lightweight script that handles one job end-to-end (LinkedIn
+engagement) so a human founder doesn't have to do it manually every day.
+
+## What it does
+
+On a single manual run, the agent:
+
+1. Opens LinkedIn using a saved session (no repeated logins)
+2. Scans the feed and picks up to `MAX_POSTS` real, non-sponsored posts
+3. For each post:
+   - Reacts (Like / Celebrate / Support / Love / Insightful / Funny — chosen
+     by scoring the post text against keyword sets, not random)
+   - Generates a short, opinionated comment in a fixed persona's voice via an
+     LLM, grounded in the actual post content
+   - Posts the comment and **verifies** it actually appears in the post's
+     DOM before counting it as a success
+   - Waits a randomized 50–90s gap before moving to the next post
+4. Logs every action (success/failure, reaction picked, comment text) to a
+   dated JSON file, and records a fingerprint of each engaged post so the
+   same post never gets engaged twice across separate runs
+
+Nothing runs on a schedule — it's a manual, human-triggered run by design,
+capped at a small number of posts per run.
+
+## Why this exists
+
+Staying visibly active on LinkedIn (reacting, commenting with real opinions)
+is one of the highest-leverage, lowest-effort things a founder can do for
+their personal brand — and one of the easiest to let slip. This project
+turns "spend 20 minutes a day commenting thoughtfully on LinkedIn" into a
+script that does the same thing, in the same voice, without the daily
+willpower cost.
+
+It also doubles as the LinkedIn "Watcher" for a broader Personal AI Employee
+architecture (Claude Code as the reasoning engine, lightweight Python
+watchers as the senses) — a pattern from the *Personal AI Employee Hackathon:
+Building Autonomous FTEs* program this project started in.
+
+## Architecture
+
+```
+ ┌──────────────┐   ┌───────────────────┐   ┌────────────────────┐
+ │ Saved session │──▶│  Feed scanner      │──▶│  Reaction picker    │
+ │ (cookies.json)│   │ (Comment-button    │   │ (keyword scoring →  │
+ │               │   │  DOM walk, tags    │   │  Like/Celebrate/... │
+ └──────────────┘   │  data-bot-id)      │   └─────────┬──────────┘
+                     └───────────────────┘             │
+                                                         ▼
+ ┌────────────────────┐   ┌──────────────────┐   ┌─────────────────┐
+ │ Dedup check          │◀──│ Persisted state   │   │ react_to_post()  │
+ │ (post_fingerprint     │   │ logs/engaged.json│   │ clicks Like btn  │
+ │  vs logs/engaged.json)│   └──────────────────┘   └─────────┬───────┘
+ └────────────────────┘                                       │
+                                                                ▼
+                              ┌───────────────────┐   ┌──────────────────┐
+                              │ comment_generator   │──▶│ click_and_comment│
+                              │ (persona.md + Groq  │   │ types + submits  │
+                              │  LLM → clean comment)│   │ + verifies DOM   │
+                              └───────────────────┘   └─────────┬────────┘
+                                                                  │
+                                                                  ▼
+                                                        ┌──────────────────┐
+                                                        │ logs/YYYY-MM-DD   │
+                                                        │ .json + human_gap │
+                                                        └──────────────────┘
+```
+
+## Tech stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Browser automation | Playwright (Python), real Chrome channel | Bundled Chromium is fingerprinted more easily than installed Chrome |
+| Session persistence | Manual cookie JSON, not `launch_persistent_context` | Avoids Chrome profile-lock conflicts when the script runs alongside a normally-open browser |
+| Bot detection evasion | Init script overriding `navigator.webdriver`, plugins, languages | Standard headless-detection probes LinkedIn (and most sites) run |
+| Comment generation | Groq API (`llama-3.3-70b-versatile`) | Fast, free-tier, OpenAI-compatible — see [LLM backend](#llm-backend-claude-cli--groq-api) below |
+| Persona | `persona.md` — plain-text style guide injected into the prompt | Keeps the "voice" editable without touching code |
+| Persistence | Flat JSON files (`logs/`, `session/`) | No DB needed for a single-user, low-volume agent |
+
+## Engineering challenges solved
+
+This project went through several real, observed failures during development
+— each one taught something about automating a frontend that actively
+resists automation.
+
+**1. LinkedIn's reaction button hides its name in `aria-label`, not visible text.**
+The Like button's accessible name for Playwright's `get_by_role(name=...)`
+isn't "Like" — it's `"Reaction button state: no reaction"`, because
+`aria-label` overrides visible text for accessible-name computation. Every
+`get_by_role(name=/^like$/i)` call silently matched nothing. Fixed by locating
+the button via `button[aria-label^="Reaction button state"]` instead, then
+verifying the label actually changed after the click (proof the reaction
+registered, not just that a click didn't throw).
+
+**2. The comment editor mounts outside the post's own DOM container.**
+LinkedIn's comment box (a `tiptap`/ProseMirror rich-text editor) doesn't live
+inside the post container that gets the `data-bot-id` tag — it mounts 2+
+parent levels up. Scoping the input search, submit-button search, and
+post-success verification to the original container meant all three silently
+failed once the editor changed. Fixed by walking up from the tagged container
+(up to 8 levels) to find the actual ancestor that contains the editor, and
+re-scoping every later lookup to that wider ancestor (`data-bot-scope`)
+instead of the original `data-bot-id`.
+
+**3. Cross-post contamination from page-wide selectors.**
+An early version queried for the comment input with a page-wide selector.
+LinkedIn keeps every previously-opened comment editor in the DOM, so after
+processing post 1, a "page-wide" query for *any* open editor kept returning
+post 1's stale editor — the script logged success on every post while
+LinkedIn showed comments on none of them. Every DOM query in this project is
+now scoped to the specific post's tagged container, and every "success" is
+verified by checking the post's actual `innerText` contains the comment
+before it's counted.
+
+**4. Pacing that only fired after success looked like a bot.**
+The inter-post delay originally only ran after a comment posted successfully.
+When comment generation was failing upstream (see #5), reactions fired back
+to back with no gap — the fastest way to get flagged for automated behavior.
+Fixed by extracting a single `human_gap()` call that runs after *every*
+post-processing attempt — success, failure, or skip — so the pacing is
+constant regardless of what happened upstream.
+
+**5. LLM backend swap: local CLI subprocess → hosted API.**
+Comment generation originally shelled out to the local `claude.cmd` CLI via
+`subprocess`. Running that from inside an already-running Claude Code session
+caused session contention — intermittent `(code 0)` failures and garbled,
+half-written text getting posted as the actual LinkedIn comment. Replaced
+with a direct Groq API call (OpenAI-compatible chat completions), called
+through a `ThreadPoolExecutor` so the synchronous SDK doesn't block the
+asyncio event loop. Output still passes through a validator (`extract_comment`)
+that rejects clarifying questions, sentence fragments, and AI meta-commentary
+before anything is allowed to post — a raw LLM response is never trusted
+directly.
+
+**6. Cross-run duplicate engagement.**
+Posts are identified during a scan by a `data-bot-id` assigned from scroll
+position — it resets every run, so it can't tell "the same real post" apart
+across two separate sessions. Fixed with a content-based fingerprint
+(`post_fingerprint`): a SHA-256 hash of the cleaned post text with dynamic
+social-proof lines ("X commented", "Suggested", "X likes this") stripped out
+first, since those lines change between scans of the same post and would
+otherwise make identical posts hash differently. Engaged fingerprints persist
+in `logs/engaged.json` so a second run the same day won't re-react to (and
+risk un-reacting) or re-comment on a post already handled.
+
+## Setup
+
+```bash
+setup.bat          # installs deps, installs Playwright's Chromium, creates .env
+# edit .env and paste your Groq API key
+run.bat             # first run: log into LinkedIn manually when the browser opens
+```
+
+Session cookies are saved after the first successful login — subsequent runs
+skip the login step entirely.
+
+## Configuration (`.env`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `GROQ_API_KEY` | — | Required. Free tier at console.groq.com |
+| `MAX_POSTS` | `3` | Posts to react+comment on per run |
+| `MIN_GAP_SECONDS` / `MAX_GAP_SECONDS` | `50` / `90` | Randomized delay between posts |
+| `HEADLESS` | `false` | Run Chrome without a visible window |
+
+## Dashboard
+
+```bash
+python generate_dashboard.py
+```
+
+Reads every file in `logs/`, aggregates posts processed, success rate,
+reaction breakdown, and daily activity, and writes a self-contained
+`dashboard.html` (charts via Chart.js, no extra Python dependency) — open it
+in any browser. It's gitignored since it's generated from local activity
+logs (real post previews and comment text), not committed source.
+
+Preview with synthetic example data (no real LinkedIn content):
+
+![Dashboard preview](docs/dashboard-preview.png)
+
+## Persona
+
+`persona.md` defines the voice — currently an "AI Solutions Expert / CEO &
+Founder" persona with explicit style rules (max 3 sentences, no hashtags, no
+sycophantic openers, must add one specific insight). It's plain text, so the
+persona can be swapped without touching code.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Covers the pure logic that's safe to unit test without a browser or live API
+calls: comment extraction/validation (`comment_generator.py`) and post
+cleaning/reaction-picking/fingerprinting (`linkedin_watcher.py`).
+
+## Responsible-use notes
+
+- Manual trigger only, capped at a small post count per run — no scheduler,
+  by design.
+- Every action is paced and logged; nothing posts without a DOM-level
+  verification that it actually landed.
+- This automates engagement on a platform whose Terms of Service restrict
+  scripted activity. It was built as a personal productivity experiment and
+  portfolio piece, not a product — use on your own account, at your own
+  discretion and risk.
+
+## What's next
+
+- Relevance filter so the agent skips posts outside the persona's actual
+  expertise instead of commenting on anything that scrolls by
+- Targeted engagement (specific hashtags/people) instead of whatever the
+  algorithmic feed surfaces
+- A feedback loop that revisits posted comments later to track which ones
+  got engagement, closing the loop on "what actually works"

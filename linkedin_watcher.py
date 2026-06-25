@@ -389,6 +389,14 @@ async def react_to_post(page: Page, post_id: str, reaction: str) -> bool:
     (not "Like") — ARIA labels override visible text for accessible-name matching,
     so get_by_role(name="Like") never matches it. Locate it via the aria-label
     prefix instead, scoped to this post's container.
+
+    Hover/click yahan Playwright ke native hover()/click() se NAHI karte — LinkedIn
+    kabhi kabhi ek floating-ui tooltip/loading-spinner portal ya koi aur transient
+    overlay chhod deta hai jo poori `<html>` ko "intercepts pointer events" bana deta
+    hai, aur Playwright ka actionability check 30s tak retry kar ke bhi fail ho jata
+    hai. JS se directly .click()/dispatchEvent karne se ye hit-test/intercept check
+    bypass ho jata hai — same pattern jo comment button aur submit button ke liye
+    pehle se use ho raha hai is file mein.
     """
     try:
         post = page.locator(f'[data-bot-id="{post_id}"]').first
@@ -400,17 +408,20 @@ async def react_to_post(page: Page, post_id: str, reaction: str) -> bool:
 
         if reaction != "like":
             # Reaction picker (flyout) kholne ke liye hover karo
-            await like_btn.hover()
+            await like_btn.evaluate(
+                "el => { el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})); "
+                "el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true})); }"
+            )
             await asyncio.sleep(random.uniform(0.8, 1.3))
 
             option = page.get_by_role("button", name=re.compile(rf"^{reaction}$", re.I)).first
             if await option.count() > 0:
-                await option.click()
+                await option.evaluate("el => el.click()")
             else:
                 # Picker nahi khula to simple Like kar do
-                await like_btn.click()
+                await like_btn.evaluate("el => el.click()")
         else:
-            await like_btn.click()
+            await like_btn.evaluate("el => el.click()")
 
         await asyncio.sleep(random.uniform(1, 2))
 
@@ -493,7 +504,9 @@ async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool
             print("  Comment input nahi mila.")
             return False
 
-        await comment_input.click()
+        # Native .click() (Playwright) is overlay/portal se intercept ho jata hai —
+        # JS se click() call karo, react_to_post wali wajah se (see uske docstring).
+        await comment_input.evaluate("el => el.click()")
         await asyncio.sleep(0.5)
         await type_humanly(comment_input, comment_text)
         await asyncio.sleep(random.uniform(1.5, 2.5))

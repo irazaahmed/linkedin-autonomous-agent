@@ -150,6 +150,19 @@ otherwise make identical posts hash differently. Engaged fingerprints persist
 in `logs/engaged.json` so a second run the same day won't re-react to (and
 risk un-reacting) or re-comment on a post already handled.
 
+**7. Real clicks blocked by a transient overlay Playwright never recovers from.**
+`Locator.click()`/`.hover()` on the reaction button and the comment input
+started failing mid-run with `<html>... intercepts pointer events`, retrying
+for the full 30s timeout every time — a LinkedIn tooltip/loading-spinner
+portal (rendered via floating-ui) sat on top of the target and never cleared,
+so every later post in the same run kept failing the same way too. Playwright
+clicks do real coordinate-based hit-testing, so an overlapping element wins
+regardless of how long you wait. Fixed by dispatching the click (and hover,
+via `mouseover`/`mouseenter`) directly on the element through `page.evaluate`
+instead — the same bypass already used for the comment-open and submit
+buttons — since a JS-invoked `.click()` fires the element's own handler
+without any hit-test, immune to whatever LinkedIn renders on top of it.
+
 ## Setup
 
 ```bash

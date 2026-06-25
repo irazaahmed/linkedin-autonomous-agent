@@ -266,6 +266,14 @@ At the end of a run, a one-line summary (`scanned`, `sponsored`, `too-old`,
 genuinely had few posts to work with, or whether everything available got
 filtered out.
 
+A plain `scrollBy(900)` sometimes doesn't trigger LinkedIn's lazy-load (one
+tall post can easily be taller than 900px, leaving the next scroll looking
+at the same content). Each scroll that reveals zero new posts counts as
+"stagnant" — the next attempt jumps straight to the bottom of the page and
+waits longer, giving LinkedIn more room to load more. After 4 stagnant
+scrolls in a row, the scan ends early instead of grinding through the full
+scroll budget for no benefit.
+
 ## What's next
 
 - A feedback loop that revisits posted comments later to track which ones

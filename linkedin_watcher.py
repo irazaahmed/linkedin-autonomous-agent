@@ -603,6 +603,17 @@ async def run():
         max_scrolls = max(15, MAX_POSTS * 8)
         scan_stats = {"scanned": 0, "sponsored": 0, "too_old": 0, "too_short": 0, "dedup": 0}
 
+        # Kabhi kabhi ek chhota scrollBy(900) LinkedIn ka lazy-load trigger nahi
+        # chhuta paata (ek bara post hi 900px se zyada lamba ho sakta hai), is
+        # liye agla scan same posts wapas deta hai — koi naya post nahi milta.
+        # Consecutive stagnant scrolls track karte hain: jab ye ho, normal
+        # chhote scroll ke bajaye bottom tak bara jump + zyada wait karte hain
+        # taake LinkedIn ko naya content load karne ka pura chance mile. Agar
+        # phir bhi kuch naya nahi milta (feed genuinely khatam ho gaya), to
+        # poora max_scrolls budget jalaye bina jaldi nikal jate hain.
+        consecutive_stagnant = 0
+        MAX_STAGNANT_SCROLLS = 4
+
         while processed < MAX_POSTS and scroll_num < max_scrolls:
 
             if not is_on_feed(page.url):
@@ -619,6 +630,8 @@ async def run():
 
             if scroll_num == 0:
                 print(f"[*] {len(posts)} posts mile is scroll mein.\n")
+
+            seen_before_scroll = len(seen_ids)
 
             # Connected (1st-degree) aur 2nd-degree logon ki posts ko pehle
             # tackle karo — har naye-revealed batch mein priority se sort.
@@ -706,8 +719,19 @@ async def run():
                 if processed < MAX_POSTS:
                     await human_gap()
 
-            await page.evaluate("window.scrollBy(0, 900)")
-            await asyncio.sleep(random.uniform(3, 5))
+            new_found = len(seen_ids) - seen_before_scroll
+            if new_found == 0:
+                consecutive_stagnant += 1
+                print(f"  [*] Is scroll mein koi naya post nahi mila ({consecutive_stagnant}/{MAX_STAGNANT_SCROLLS}) — bara scroll + zyada wait try kar rahe hain.")
+                if consecutive_stagnant >= MAX_STAGNANT_SCROLLS:
+                    print("  [*] Feed se naye posts aana band ho gaya hai — scan yahin rok rahe hain (waqt zaya nahi karte).\n")
+                    break
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(random.uniform(5, 8))
+            else:
+                consecutive_stagnant = 0
+                await page.evaluate("window.scrollBy(0, 900)")
+                await asyncio.sleep(random.uniform(3, 5))
             scroll_num += 1
 
         print(

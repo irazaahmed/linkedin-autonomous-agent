@@ -180,19 +180,19 @@ def post_fingerprint(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def load_engaged() -> dict:
-    if not ENGAGED_FILE.exists():
+def load_engaged(engaged_file: Path = ENGAGED_FILE) -> dict:
+    if not engaged_file.exists():
         return {}
     try:
-        with open(ENGAGED_FILE, encoding="utf-8") as f:
+        with open(engaged_file, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 
 
-def save_engaged(engaged: dict):
-    LOGS_DIR.mkdir(exist_ok=True)
-    with open(ENGAGED_FILE, "w", encoding="utf-8") as f:
+def save_engaged(engaged: dict, engaged_file: Path = ENGAGED_FILE):
+    engaged_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(engaged_file, "w", encoding="utf-8") as f:
         json.dump(engaged, f, indent=2, ensure_ascii=False)
 
 
@@ -276,9 +276,10 @@ def is_relevant_post(text: str) -> bool:
 
 
 def log_result(post_id: str, preview: str, comment: str, success: bool,
-                reaction: str | None = None, reacted: bool | None = None):
-    LOGS_DIR.mkdir(exist_ok=True)
-    log_file = LOGS_DIR / f"{datetime.now().strftime('%Y-%m-%d')}.json"
+                reaction: str | None = None, reacted: bool | None = None,
+                log_dir: Path = LOGS_DIR):
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.json"
     entry = {
         "timestamp": datetime.now().isoformat(),
         "post_id": post_id,
@@ -557,6 +558,64 @@ async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool
         return False
 
 
+async def switch_engage_as(page: Page, identity_name: str) -> bool:
+    """LinkedIn ka 'Comment, react, and repost as' identity switcher use karta hai
+    taake baad ke sab reactions/comments personal profile ke bajaye ek Page
+    (e.g. company) ke naam se hon. Ye ek session-wide setting hai — kisi bhi
+    post ke action-bar se khol sakte hain, scope kisi specific post se nahi
+    bandha — is liye run() shuru hote hi sirf EK BAAR call hota hai.
+
+    Trigger button ka exact selector live LinkedIn DOM dekh ke nahi banaya ja
+    saka (sirf screenshots se), is liye fail hone par poora diagnostic print
+    karte hain taake agar selector kaam na kare to turant pata chal jaye
+    exact wajah, dobara guess-and-check round trip ki zaroorat na pade."""
+    try:
+        trigger = page.locator('button[aria-label*="repost as" i]').first
+        if await trigger.count() == 0:
+            buttons_sample = await page.evaluate("""
+                () => Array.from(document.querySelectorAll('button'))
+                    .filter(b => /repost|comment.*as|react.*as/i.test(b.getAttribute('aria-label') || ''))
+                    .slice(0, 10)
+                    .map(b => b.getAttribute('aria-label'))
+            """)
+            print(f"  [!] 'Comment, react, and repost as' switcher button nahi mila.")
+            print(f"  [DEBUG] Kareeb-tar aria-labels mile: {buttons_sample}")
+            return False
+
+        await trigger.evaluate("el => el.click()")
+        await asyncio.sleep(random.uniform(1.5, 2.5))
+
+        dialog = page.get_by_role("dialog").first
+        if await dialog.count() == 0:
+            print("  [!] 'Comment, react, and repost as' dialog nahi khula (click ka koi asar nahi hua).")
+            return False
+
+        option = dialog.get_by_text(identity_name, exact=False).first
+        if await option.count() == 0:
+            dialog_text = (await dialog.inner_text())[:300]
+            print(f"  [!] Dialog mein '{identity_name}' option nahi mila.")
+            print(f"  [DEBUG] Dialog ka text: {dialog_text}")
+            return False
+
+        await option.evaluate("el => el.click()")
+        await asyncio.sleep(random.uniform(0.5, 1))
+
+        save_btn = dialog.get_by_role("button", name=re.compile(r"^save$", re.I)).first
+        if await save_btn.count() == 0:
+            print(f"  [!] Dialog mein Save button nahi mila.")
+            return False
+
+        await save_btn.evaluate("el => el.click()")
+        await asyncio.sleep(random.uniform(1.5, 2.5))
+
+        print(f"  [OK] Engagement identity '{identity_name}' per switch ho gayi.")
+        return True
+
+    except Exception as e:
+        print(f"  [!] Engage-as switch error: {e}")
+        return False
+
+
 async def human_gap():
     """Posts ke beech gap — taake reactions/comments burst mein na jayein aur spam na lage."""
     delay = random.uniform(MIN_GAP_SECONDS, MAX_GAP_SECONDS)
@@ -564,12 +623,23 @@ async def human_gap():
     await asyncio.sleep(delay)
 
 
-async def run():
+async def run(
+    engage_as: str | None = None,
+    engaged_path: Path = ENGAGED_FILE,
+    log_dir: Path = LOGS_DIR,
+    persona_file: str = "persona.md",
+):
+    """engage_as set ho to run shuru hote hi 'Comment, react, and repost as'
+    identity us Page per switch karte hain (e.g. company), aur switch fail ho
+    to run abort kar dete hain — galat identity se comment/react hone se
+    behtar hai run hi na ho. engaged_path/log_dir alag rakhne se ek dusra
+    'agent' (dusri identity ke liye) apna khud ka dedup/log history rakh
+    sakta hai, personal watcher ke history se mix hue bina."""
     SESSION_DIR.mkdir(exist_ok=True)
-    LOGS_DIR.mkdir(exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 55)
-    print("   LinkedIn Autonomous Commenter")
+    print("   LinkedIn Autonomous Commenter" + (f" — {engage_as}" if engage_as else ""))
     print("   AI Solutions Expert — CEO/Founder Persona")
     print("=" * 55 + "\n")
 
@@ -632,9 +702,22 @@ async def run():
         await page.evaluate("window.scrollBy(0, -400)")
         await asyncio.sleep(2)
 
+        if engage_as:
+            print(f"[*] Engagement identity '{engage_as}' per switch kar rahe hain...")
+            switched = await switch_engage_as(page, engage_as)
+            if not switched:
+                print(
+                    f"\n[!] '{engage_as}' identity per switch nahi ho saka — run "
+                    "yahan rok rahe hain (galat identity se comment/react hone se "
+                    "behtar hai run hi na ho).\n"
+                )
+                input("\nEnter dabao browser band karne ke liye...")
+                await browser.close()
+                return
+
         processed   = 0
         seen_ids    = set()
-        engaged     = load_engaged()
+        engaged     = load_engaged(engaged_path)
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
 
         print("[*] Scanning home feed.\n")
@@ -735,7 +818,7 @@ async def run():
                         "preview": text[:80],
                         "commented": False,
                     }
-                    save_engaged(engaged)
+                    save_engaged(engaged, engaged_path)
 
                 if not is_relevant_post(text):
                     print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
@@ -746,7 +829,7 @@ async def run():
                 print(f"  Generating comment...")
                 loop = asyncio.get_event_loop()
                 try:
-                    comment = await loop.run_in_executor(_executor, generate_comment, text)
+                    comment = await loop.run_in_executor(_executor, generate_comment, text, persona_file)
                 except Exception as e:
                     print(f"  [SKIP] Comment generate nahi hua: {e}\n")
                     # Reaction to pehle hi de di — agla post bhi gap se hi karo
@@ -757,13 +840,13 @@ async def run():
                 print(f"  Posting...")
 
                 success = await click_and_comment(page, post_id, comment)
-                log_result(post_id, text, comment, success, reaction, reacted)
+                log_result(post_id, text, comment, success, reaction, reacted, log_dir=log_dir)
 
                 if success:
                     processed += 1
                     if fp in engaged:
                         engaged[fp]["commented"] = True
-                        save_engaged(engaged)
+                        save_engaged(engaged, engaged_path)
                     print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
                 else:
                     print("  [FAIL] Next post pe ja raha hun.\n")
@@ -795,7 +878,7 @@ async def run():
 
         print("=" * 55)
         print(f"  Complete! Comments: {processed}/{MAX_POSTS}")
-        print(f"  Log: logs/{datetime.now().strftime('%Y-%m-%d')}.json")
+        print(f"  Log: {log_dir}/{datetime.now().strftime('%Y-%m-%d')}.json")
         print("=" * 55)
 
         input("\nEnter dabao browser band karne ke liye...")

@@ -22,10 +22,10 @@ def _get_client() -> Groq:
     return _client
 
 
-def load_persona() -> str:
-    persona_file = Path("persona.md")
-    if persona_file.exists():
-        return persona_file.read_text(encoding="utf-8")
+def load_persona(persona_file: str = "persona.md") -> str:
+    path = Path(persona_file)
+    if path.exists():
+        return path.read_text(encoding="utf-8")
     return "AI Solutions Expert, CEO/Founder. Write thoughtful expert comments."
 
 
@@ -46,8 +46,8 @@ def _pick_comment_length(post_content: str) -> str:
     return "short" if random.random() < short_chance else "medium"
 
 
-def generate_comment(post_content: str) -> str:
-    persona = load_persona()
+def generate_comment(post_content: str, persona_file: str = "persona.md") -> str:
+    persona = load_persona(persona_file)
     length_instruction = LENGTH_INSTRUCTIONS[_pick_comment_length(post_content)]
 
     prompt = (

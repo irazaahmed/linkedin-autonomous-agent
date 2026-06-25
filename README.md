@@ -183,6 +183,29 @@ skip the login step entirely.
 | `MIN_GAP_SECONDS` / `MAX_GAP_SECONDS` | `50` / `90` | Randomized delay between posts |
 | `HEADLESS` | `false` | Run Chrome without a visible window |
 | `MAX_POST_AGE_HOURS` | `12` | Skip posts older than this — no benefit reacting/commenting on a post the feed algorithm has stopped surfacing |
+| `ENGAGE_AS_PAGE` | `Cybrum Solutions` | Used only by `linkedin_watcher_cybrum.py` — Page name to engage as |
+
+## Engaging as a Page instead of your personal profile
+
+```bash
+python linkedin_watcher_cybrum.py
+```
+
+A second entry point that reuses every bit of `linkedin_watcher.py`'s scan/
+react/comment logic (so any future DOM fix lands in both at once — see
+[Engineering challenges solved](#engineering-challenges-solved)) but, right
+after the feed loads, drives LinkedIn's own **"Comment, react, and repost
+as"** picker (the small identity switcher next to a post's like count) to
+switch engagement to a Page you admin (`ENGAGE_AS_PAGE` in `.env`, default
+`Cybrum Solutions`) before scanning a single post. If that switch can't be
+confirmed, the run aborts immediately instead of risking a comment going out
+under the wrong identity.
+
+It writes to `logs/cybrum/` with its own `engaged.json`, so its dedup history
+never mixes with the personal watcher's — the same post can legitimately get
+a personal reply from you *and* an official reply from the company, tracked
+independently. It also uses a separate `persona_cybrum.md` — a company "we"
+voice instead of the personal CEO "I" voice — instead of `persona.md`.
 
 ## Dashboard
 
@@ -205,7 +228,10 @@ Preview with synthetic example data (no real LinkedIn content):
 `persona.md` defines the voice — currently an "AI Solutions Expert / CEO &
 Founder" persona with explicit style rules (1-3 sentences, no hashtags, no
 sycophantic openers, must add one specific insight). It's plain text, so the
-persona can be swapped without touching code.
+persona can be swapped without touching code. `generate_comment()` takes the
+persona file path as an argument (default `persona.md`) — that's how
+`linkedin_watcher_cybrum.py` swaps in `persona_cybrum.md`'s company "we"
+voice without forking any code.
 
 Comment length varies per post instead of always maxing out at 3 sentences:
 `_pick_comment_length()` in `comment_generator.py` picks "short" (one

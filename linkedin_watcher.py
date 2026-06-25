@@ -426,24 +426,36 @@ async def react_to_post(page: Page, post_id: str, reaction: str) -> bool:
 async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool:
     """post_id wale exact post per comment likhta hai aur verify karta hai ke wo wahan actually gaya."""
     try:
-        # Sirf isi post_id ke container ke andar Comment button dhundho — kisi dusre post per nahi jana
+        # Sirf isi post_id ke container ke andar Comment button dhundho — kisi dusre post per nahi jana.
+        # Yahan bhi aria-label fallback chahiye, get_posts_from_page wali wajah se (visible text
+        # hamesha exact "comment" nahi hota — LinkedIn kabhi count/icon-only label deta hai).
         clicked = await page.evaluate("""
             (postId) => {
                 const container = document.querySelector(`[data-bot-id="${postId}"]`);
-                if (!container) return false;
+                if (!container) return { ok: false, reason: "container nahi mila" };
                 const buttons = Array.from(container.querySelectorAll('button'));
                 const commentBtn = buttons.find(b => {
-                    const txt = b.innerText.trim().toLowerCase();
-                    return txt === 'comment' || txt === 'add a comment';
+                    const txt = (b.innerText || '').trim().toLowerCase();
+                    if (txt === 'comment' || txt === 'add a comment') return true;
+                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return /^comment\\b/.test(aria);
                 });
-                if (!commentBtn) return false;
+                if (!commentBtn) {
+                    const sample = buttons.slice(0, 12).map(b => ({
+                        text: (b.innerText || '').trim().slice(0, 25),
+                        aria: (b.getAttribute('aria-label') || '').slice(0, 50),
+                    }));
+                    return { ok: false, reason: "match nahi mila", buttonCount: buttons.length, sample };
+                }
                 commentBtn.click();
-                return true;
+                return { ok: true };
             }
         """, post_id)
 
-        if not clicked:
-            print("  Comment button nahi mila.")
+        if not clicked.get("ok"):
+            print(f"  Comment button nahi mila ({clicked.get('reason')}).")
+            if "sample" in clicked:
+                print(f"  [DEBUG] Container mein {clicked['buttonCount']} buttons, sample: {clicked['sample']}")
             return False
 
         await asyncio.sleep(random.uniform(2, 3))
@@ -493,8 +505,11 @@ async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool
                 if (!container) return false;
                 const buttons = Array.from(container.querySelectorAll('button'));
                 const candidates = buttons.filter(b => {
-                    const txt = b.innerText.trim().toLowerCase();
-                    return (txt === 'comment' || txt === 'post') && !b.disabled;
+                    if (b.disabled) return false;
+                    const txt = (b.innerText || '').trim().toLowerCase();
+                    if (txt === 'comment' || txt === 'post') return true;
+                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return aria === 'comment' || aria === 'post' || aria.startsWith('post comment');
                 });
                 if (candidates.length === 0) return false;
                 candidates[candidates.length - 1].click();

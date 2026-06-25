@@ -1,4 +1,5 @@
 import os
+import random
 import re
 from pathlib import Path
 
@@ -28,14 +29,32 @@ def load_persona() -> str:
     return "AI Solutions Expert, CEO/Founder. Write thoughtful expert comments."
 
 
+LENGTH_INSTRUCTIONS = {
+    "short": "Length: exactly ONE sentence — short and punchy, still with one specific insight.",
+    "medium": "Length: 2 to 3 sentences, per the persona's style rules above.",
+}
+
+
+def _pick_comment_length(post_content: str) -> str:
+    """Comment ki length post ke hisab se choose karta hai — chhota/light post
+    zyada context nahi deta is liye short comment zyada chance pe aata hai,
+    lamba/detailed post medium (2-3 sentence) comment ke liye gunjaish deta
+    hai. Hamesha 3 sentences tak mat jao — isi se comments "bohot lambay" lag
+    rahe the. Thoda randomness bhi rakha hai taake same-length post bhi
+    har baar same na lage."""
+    short_chance = 0.65 if len(post_content) < 220 else 0.4
+    return "short" if random.random() < short_chance else "medium"
+
+
 def generate_comment(post_content: str) -> str:
     persona = load_persona()
+    length_instruction = LENGTH_INSTRUCTIONS[_pick_comment_length(post_content)]
 
     prompt = (
         f"{persona}\n\n"
         f'A LinkedIn post says: "{post_content[:500]}"\n\n'
         f"Write ONLY the comment text this persona would post in reply — "
-        f"no preamble, no explanation, no quotes around it."
+        f"no preamble, no explanation, no quotes around it. {length_instruction}"
     )
 
     try:

@@ -19,6 +19,7 @@ _executor = ThreadPoolExecutor(max_workers=1)
 MAX_POSTS        = int(os.getenv("MAX_POSTS", "5"))
 MIN_GAP_SECONDS  = float(os.getenv("MIN_GAP_SECONDS", "50"))
 MAX_GAP_SECONDS  = float(os.getenv("MAX_GAP_SECONDS", "90"))
+MAX_POST_AGE_HOURS = float(os.getenv("MAX_POST_AGE_HOURS", "12"))
 HEADLESS         = os.getenv("HEADLESS", "false").strip().lower() == "true"
 SESSION_DIR      = Path("session")
 LOGS_DIR         = Path("logs")
@@ -82,6 +83,65 @@ async def load_cookies(context: BrowserContext) -> bool:
 
 def is_on_feed(url: str) -> bool:
     return "linkedin.com/feed" in url and "login" not in url and "authwall" not in url
+
+
+# LinkedIn ki header timestamp line ("6h", "2d", "1mo • Edited") match karne
+# ke liye — purani posts (jahan engagement ka faida nahi) skip karne ke liye
+# clean_post_text se PEHLE raw text par chalana zaroori hai, warna ye line
+# (length < 4 ya bullet-headline filter ki wajah se) cleaning mein hi udh jati hai.
+POST_AGE_RE = re.compile(
+    r"^(\d+)\s*(mo|mos|min|mins|hr|hrs|sec|secs|wk|wks|yr|yrs|[smhdwy])"
+    r"(?:[\s•\-]*(?:edited|promoted))*[\s•\-]*$",
+    re.I,
+)
+
+UNIT_TO_HOURS = {
+    "s": 1 / 3600, "sec": 1 / 3600, "secs": 1 / 3600,
+    "m": 1 / 60, "min": 1 / 60, "mins": 1 / 60,
+    "h": 1, "hr": 1, "hrs": 1,
+    "d": 24, "day": 24, "days": 24,
+    "w": 24 * 7, "wk": 24 * 7, "wks": 24 * 7,
+    "mo": 24 * 30, "mos": 24 * 30,
+    "y": 24 * 365, "yr": 24 * 365, "yrs": 24 * 365,
+}
+
+
+def post_age_hours(raw_text: str) -> float | None:
+    """Post container ke raw (uncleaned) text mein se header timestamp line
+    dhundh ke age hours mein deta hai ("6h" -> 6.0, "2d" -> 48.0). Sirf header
+    ke aas-paas wali pehli few lines check karte hain (body text mein kahin
+    bhi "6h" jaisi line milne se false-positive na ho). Line na mile to None
+    — age unknown hone par post drop nahi karte (selector format badal sakta
+    hai, benefit of doubt deta hai)."""
+    for line in raw_text.split("\n")[:8]:
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower() in ("now", "just now"):
+            return 0.0
+        m = POST_AGE_RE.fullmatch(line)
+        if m:
+            unit = m.group(2).lower()
+            return int(m.group(1)) * UNIT_TO_HOURS.get(unit, 1)
+    return None
+
+
+# Connection-degree badge ("1st"/"2nd"/"3rd") apni line par akela hota hai,
+# kabhi middot prefix ke sath ("· 1st" — UI_WORDS mein bhi yehi form hai).
+DEGREE_RE = re.compile(r"^[·•]?\s*(1st|2nd|3rd)\s*$", re.I)
+DEGREE_RANK = {"1st": 1, "2nd": 2, "3rd": 3}
+
+
+def post_connection_degree(raw_text: str) -> int:
+    """Author connection-degree raw text se nikalta hai — 1 = 1st-degree
+    (direct connection), 2 = 2nd-degree, 3 = 3rd-degree, 4 = badge nahi mila
+    (Suggested/company-page posts, sab se kam priority). Lower number =
+    pehle tackle karna hai (connected logo ki posts ko priority)."""
+    for line in raw_text.split("\n")[:10]:
+        m = DEGREE_RE.match(line.strip())
+        if m:
+            return DEGREE_RANK[m.group(1).lower()]
+    return 4
 
 
 def clean_post_text(raw: str) -> str:
@@ -462,17 +522,6 @@ async def human_gap():
     await asyncio.sleep(delay)
 
 
-def build_target_urls() -> list[str]:
-    """TARGET_HASHTAGS (.env, comma-separated, # optional) se hashtag feed
-    URLs banata hai — taake bot algorithmic home feed ke bajaye specific
-    topics target kar sake. Unset/empty ho to purana behavior: sirf home feed."""
-    raw = os.getenv("TARGET_HASHTAGS", "").strip()
-    tags = [t.strip().lstrip("#") for t in raw.split(",") if t.strip()]
-    if not tags:
-        return [LINKEDIN_FEED]
-    return [f"https://www.linkedin.com/feed/hashtag/{t}/" for t in tags]
-
-
 async def run():
     SESSION_DIR.mkdir(exist_ok=True)
     LOGS_DIR.mkdir(exist_ok=True)
@@ -546,126 +595,127 @@ async def run():
         engaged     = load_engaged()
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
 
-        targets = build_target_urls()
-        random.shuffle(targets)  # order varies run to run so a long hashtag list doesn't always favor the first few
-        if targets == [LINKEDIN_FEED]:
-            print("[*] Target: home feed (no TARGET_HASHTAGS set).\n")
-        else:
-            print(f"[*] Targeted hashtags: {', '.join(t.rstrip('/').rsplit('/', 1)[-1] for t in targets)}\n")
+        print("[*] Scanning home feed.\n")
+        scroll_num = 0
+        # Relevance filter + dedup ke baad har post comment nahi banta — is
+        # liye scroll budget MAX_POSTS ke hisab se scale karte hain, fixed
+        # 25 kaafi nahi raha jab MAX_POSTS barha do.
+        max_scrolls = max(15, MAX_POSTS * 8)
+        scan_stats = {"scanned": 0, "sponsored": 0, "too_old": 0, "too_short": 0, "dedup": 0}
 
-        for target_url in targets:
-            if processed >= MAX_POSTS:
-                break
+        while processed < MAX_POSTS and scroll_num < max_scrolls:
 
-            if not page.url.rstrip("/").startswith(target_url.rstrip("/")):
-                print(f"[*] Navigating to {target_url}")
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            if not is_on_feed(page.url):
+                await page.goto(LINKEDIN_FEED, wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(4)
-                await page.evaluate("window.scrollBy(0, 400)")
-                await asyncio.sleep(2)
-                await page.evaluate("window.scrollBy(0, -400)")
-                await asyncio.sleep(2)
 
-            print(f"[*] Scanning shuru: {target_url}\n")
-            scroll_num = 0
-            # Relevance filter + dedup ke baad har post comment nahi banta — is
-            # liye scroll budget MAX_POSTS ke hisab se scale karte hain, fixed
-            # 25 kaafi nahi raha jab MAX_POSTS barha do. Har target ko apna
-            # fresh budget milta hai taake pehla hashtag baaki sabka budget na khaye.
-            max_scrolls = max(15, MAX_POSTS * 8)
+            try:
+                posts = await get_posts_from_page(page)
+            except Exception as e:
+                print(f"  [!] Scan error: {e}")
+                await asyncio.sleep(3)
+                scroll_num += 1
+                continue
 
-            while processed < MAX_POSTS and scroll_num < max_scrolls:
+            if scroll_num == 0:
+                print(f"[*] {len(posts)} posts mile is scroll mein.\n")
 
-                if not is_on_feed(page.url):
-                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-                    await asyncio.sleep(4)
+            # Connected (1st-degree) aur 2nd-degree logon ki posts ko pehle
+            # tackle karo — har naye-revealed batch mein priority se sort.
+            posts.sort(key=lambda p: post_connection_degree(p.get("text", "")))
 
-                try:
-                    posts = await get_posts_from_page(page)
-                except Exception as e:
-                    print(f"  [!] Scan error: {e}")
-                    await asyncio.sleep(3)
-                    scroll_num += 1
+            for post in posts:
+                if processed >= MAX_POSTS:
+                    break
+
+                post_id = post.get("id", "")
+                if not post_id or post_id in seen_ids:
+                    continue
+                seen_ids.add(post_id)
+                scan_stats["scanned"] += 1
+
+                if post.get("sponsored"):
+                    print("  [SKIP] Sponsored post.")
+                    scan_stats["sponsored"] += 1
                     continue
 
-                if scroll_num == 0:
-                    print(f"[*] {len(posts)} posts mile is scroll mein.\n")
+                age_hours = post_age_hours(post.get("text", ""))
+                if age_hours is not None and age_hours > MAX_POST_AGE_HOURS:
+                    print(f"  [SKIP] Post {age_hours:.0f}h purana hai (limit {MAX_POST_AGE_HOURS:.0f}h) — engagement ka faida nahi.")
+                    scan_stats["too_old"] += 1
+                    continue
 
-                for post in posts:
-                    if processed >= MAX_POSTS:
-                        break
+                text = clean_post_text(post.get("text", ""))
+                if len(text) < 60:
+                    scan_stats["too_short"] += 1
+                    continue
 
-                    post_id = post.get("id", "")
-                    if not post_id or post_id in seen_ids:
-                        continue
-                    seen_ids.add(post_id)
+                fp = post_fingerprint(text)
+                if fp in engaged:
+                    print("  [SKIP] Pehle hi kabhi engage ho chuke is post pe.")
+                    scan_stats["dedup"] += 1
+                    continue
 
-                    if post.get("sponsored"):
-                        print("  [SKIP] Sponsored post.")
-                        continue
+                print(f"[POST {processed + 1}/{MAX_POSTS}]")
+                print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
 
-                    text = clean_post_text(post.get("text", ""))
-                    if len(text) < 60:
-                        continue
+                reaction = pick_reaction(text)
+                print(f"  Reaction : {reaction}")
+                reacted = await react_to_post(page, post_id, reaction)
+                print(f"  {'[OK]' if reacted else '[WARN]'} Reaction {'de diya' if reacted else 'nahi de paya'}.")
 
-                    fp = post_fingerprint(text)
-                    if fp in engaged:
-                        print("  [SKIP] Pehle hi kabhi engage ho chuke is post pe.")
-                        continue
+                if reacted:
+                    engaged[fp] = {
+                        "timestamp": datetime.now().isoformat(),
+                        "preview": text[:80],
+                        "commented": False,
+                    }
+                    save_engaged(engaged)
 
-                    print(f"[POST {processed + 1}/{MAX_POSTS}]")
-                    print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
-
-                    reaction = pick_reaction(text)
-                    print(f"  Reaction : {reaction}")
-                    reacted = await react_to_post(page, post_id, reaction)
-                    print(f"  {'[OK]' if reacted else '[WARN]'} Reaction {'de diya' if reacted else 'nahi de paya'}.")
-
-                    if reacted:
-                        engaged[fp] = {
-                            "timestamp": datetime.now().isoformat(),
-                            "preview": text[:80],
-                            "commented": False,
-                        }
-                        save_engaged(engaged)
-
-                    if not is_relevant_post(text):
-                        print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
-                        if processed < MAX_POSTS:
-                            await human_gap()
-                        continue
-
-                    print(f"  Generating comment...")
-                    loop = asyncio.get_event_loop()
-                    try:
-                        comment = await loop.run_in_executor(_executor, generate_comment, text)
-                    except Exception as e:
-                        print(f"  [SKIP] Comment generate nahi hua: {e}\n")
-                        # Reaction to pehle hi de di — agla post bhi gap se hi karo
-                        if processed < MAX_POSTS:
-                            await human_gap()
-                        continue
-                    print(f"  Comment  : {comment}")
-                    print(f"  Posting...")
-
-                    success = await click_and_comment(page, post_id, comment)
-                    log_result(post_id, text, comment, success, reaction, reacted)
-
-                    if success:
-                        processed += 1
-                        if fp in engaged:
-                            engaged[fp]["commented"] = True
-                            save_engaged(engaged)
-                        print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
-                    else:
-                        print("  [FAIL] Next post pe ja raha hun.\n")
-
+                if not is_relevant_post(text):
+                    print("  [SKIP] Comment skip — post persona ke expertise/celebration scope se bahar.\n")
                     if processed < MAX_POSTS:
                         await human_gap()
+                    continue
 
-                await page.evaluate("window.scrollBy(0, 900)")
-                await asyncio.sleep(random.uniform(3, 5))
-                scroll_num += 1
+                print(f"  Generating comment...")
+                loop = asyncio.get_event_loop()
+                try:
+                    comment = await loop.run_in_executor(_executor, generate_comment, text)
+                except Exception as e:
+                    print(f"  [SKIP] Comment generate nahi hua: {e}\n")
+                    # Reaction to pehle hi de di — agla post bhi gap se hi karo
+                    if processed < MAX_POSTS:
+                        await human_gap()
+                    continue
+                print(f"  Comment  : {comment}")
+                print(f"  Posting...")
+
+                success = await click_and_comment(page, post_id, comment)
+                log_result(post_id, text, comment, success, reaction, reacted)
+
+                if success:
+                    processed += 1
+                    if fp in engaged:
+                        engaged[fp]["commented"] = True
+                        save_engaged(engaged)
+                    print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
+                else:
+                    print("  [FAIL] Next post pe ja raha hun.\n")
+
+                if processed < MAX_POSTS:
+                    await human_gap()
+
+            await page.evaluate("window.scrollBy(0, 900)")
+            await asyncio.sleep(random.uniform(3, 5))
+            scroll_num += 1
+
+        print(
+            f"[*] Scan summary: scanned {scan_stats['scanned']}, "
+            f"sponsored {scan_stats['sponsored']}, too-old {scan_stats['too_old']}, "
+            f"too-short {scan_stats['too_short']}, dedup {scan_stats['dedup']}, "
+            f"engaged {processed}.\n"
+        )
 
         print("=" * 55)
         print(f"  Complete! Comments: {processed}/{MAX_POSTS}")

@@ -1,9 +1,9 @@
 from linkedin_watcher import (
-    LINKEDIN_FEED,
-    build_target_urls,
     clean_post_text,
     is_relevant_post,
     pick_reaction,
+    post_age_hours,
+    post_connection_degree,
     post_fingerprint,
 )
 
@@ -67,16 +67,45 @@ def test_is_relevant_post_rejects_unrelated_course_post():
     assert not is_relevant_post(text)
 
 
-def test_build_target_urls_defaults_to_home_feed(monkeypatch):
-    monkeypatch.delenv("TARGET_HASHTAGS", raising=False)
-    assert build_target_urls() == [LINKEDIN_FEED]
+def test_post_age_hours_parses_hours():
+    raw = "Feed post\nJane Doe\nFounder @ Acme\n6h • Edited\nGreat post body here.\n"
+    assert post_age_hours(raw) == 6.0
 
 
-def test_build_target_urls_builds_hashtag_feeds(monkeypatch):
-    monkeypatch.setenv("TARGET_HASHTAGS", "#AI, automation , futureOfWork")
-    urls = build_target_urls()
-    assert urls == [
-        "https://www.linkedin.com/feed/hashtag/AI/",
-        "https://www.linkedin.com/feed/hashtag/automation/",
-        "https://www.linkedin.com/feed/hashtag/futureOfWork/",
-    ]
+def test_post_age_hours_parses_days_and_weeks():
+    assert post_age_hours("Jane Doe\nFounder @ Acme\n2d\nBody text") == 48.0
+    assert post_age_hours("Jane Doe\nFounder @ Acme\n3w\nBody text") == 3 * 24 * 7
+
+
+def test_post_age_hours_parses_minutes_and_now():
+    assert post_age_hours("Jane Doe\nFounder @ Acme\n45m\nBody text") == 0.75
+    assert post_age_hours("Jane Doe\nFounder @ Acme\nNow\nBody text") == 0.0
+
+
+def test_post_age_hours_ignores_unrelated_numbers_in_body():
+    raw = (
+        "Feed post\nJane Doe\nFounder @ Acme | Grow your LinkedIn in 60 Days\n"
+        "6h\n"
+        "We just crossed 10,000 customers, 3,000 followers and a 5 min read.\n"
+    )
+    assert post_age_hours(raw) == 6.0
+
+
+def test_post_age_hours_returns_none_when_no_timestamp_found():
+    raw = "Jane Doe\nFounder @ Acme\nWe just crossed 10,000 customers today."
+    assert post_age_hours(raw) is None
+
+
+def test_post_connection_degree_detects_first_degree():
+    raw = "Jane Doe\n· 1st\nFounder @ Acme\n6h\nBody text here."
+    assert post_connection_degree(raw) == 1
+
+
+def test_post_connection_degree_detects_second_and_third():
+    assert post_connection_degree("Jane Doe\n2nd\nHeadline\nBody") == 2
+    assert post_connection_degree("Jane Doe\n3rd\nHeadline\nBody") == 3
+
+
+def test_post_connection_degree_defaults_to_lowest_priority_when_missing():
+    raw = "Feed post\nSuggested\nJane Doe\nFounder @ Acme\nBody text here."
+    assert post_connection_degree(raw) == 4

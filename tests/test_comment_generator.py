@@ -1,6 +1,6 @@
 import pytest
 
-from comment_generator import extract_comment, _is_valid_comment
+from comment_generator import extract_comment, _is_valid_comment, _pick_comment_length
 
 
 def test_is_valid_comment_rejects_short_text():
@@ -60,3 +60,21 @@ def test_extract_comment_raises_on_garbage():
     raw = "could you share more details? what specific outcome are you looking to achieve here?"
     with pytest.raises(RuntimeError):
         extract_comment(raw)
+
+
+def test_pick_comment_length_short_post_below_threshold_roll(monkeypatch):
+    monkeypatch.setattr("comment_generator.random.random", lambda: 0.1)
+    assert _pick_comment_length("short post") == "short"
+
+
+def test_pick_comment_length_short_post_above_threshold_roll(monkeypatch):
+    monkeypatch.setattr("comment_generator.random.random", lambda: 0.9)
+    assert _pick_comment_length("short post") == "medium"
+
+
+def test_pick_comment_length_long_post_uses_lower_short_chance(monkeypatch):
+    long_post = "x" * 300
+    monkeypatch.setattr("comment_generator.random.random", lambda: 0.5)
+    assert _pick_comment_length(long_post) == "medium"
+    monkeypatch.setattr("comment_generator.random.random", lambda: 0.3)
+    assert _pick_comment_length(long_post) == "short"

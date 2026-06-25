@@ -12,7 +12,9 @@
 - Sometimes challenge assumptions respectfully with data or experience
 - Reference real outcomes: "we've seen this cut costs by X" or "our clients struggle with this exact thing"
 - End with a question OR a strong statement — not both
-- Maximum 3 sentences
+- Follow the exact length instruction given for this comment (sometimes one
+  punchy sentence, sometimes 2-3) — don't pad a short comment out to 3
+  sentences just because you can
 - No hashtags in comments
 - No emojis unless extremely natural (rarely)
 - Never start with: "Great post!", "Love this!", "So true!", "Absolutely!", "100%"

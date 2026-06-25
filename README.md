@@ -169,6 +169,7 @@ skip the login step entirely.
 | `MAX_POSTS` | `5` | Posts to react+comment on per run |
 | `MIN_GAP_SECONDS` / `MAX_GAP_SECONDS` | `50` / `90` | Randomized delay between posts |
 | `HEADLESS` | `false` | Run Chrome without a visible window |
+| `MAX_POST_AGE_HOURS` | `12` | Skip posts older than this — no benefit reacting/commenting on a post the feed algorithm has stopped surfacing |
 
 ## Dashboard
 
@@ -189,9 +190,15 @@ Preview with synthetic example data (no real LinkedIn content):
 ## Persona
 
 `persona.md` defines the voice — currently an "AI Solutions Expert / CEO &
-Founder" persona with explicit style rules (max 3 sentences, no hashtags, no
+Founder" persona with explicit style rules (1-3 sentences, no hashtags, no
 sycophantic openers, must add one specific insight). It's plain text, so the
 persona can be swapped without touching code.
+
+Comment length varies per post instead of always maxing out at 3 sentences:
+`_pick_comment_length()` in `comment_generator.py` picks "short" (one
+punchy sentence) or "medium" (2-3 sentences) before generating, weighted by
+the post's own length, with some randomness mixed in so the same kind of
+post doesn't always get the same length comment.
 
 ## Tests
 
@@ -235,17 +242,29 @@ skips the comment — saving an LLM call and avoiding off-topic comments under
 the persona's name, like the React-testing-course post that got an AI-persona
 comment before this filter existed.
 
-## Targeted engagement
+## Feed scanning
 
-By default the agent scans the algorithmic home feed. Set `TARGET_HASHTAGS`
-in `.env` (comma-separated, e.g. `artificialintelligence,automation`) to
-scan specific hashtag feeds instead. The list ships with ~20 AI/automation/
-founder-relevant tags by default. The order is shuffled every run (so a long
-list doesn't always favor the first couple of tags), and the agent applies
-the same scan → relevance filter → react → comment pipeline to each one,
-moving to the next hashtag once `MAX_POSTS` is reached or a hashtag runs out
-of new posts. Each hashtag gets its own scroll budget so one popular tag
-can't starve the others.
+The agent scans the algorithmic home feed only — no hashtag targeting.
+LinkedIn's home feed already weights toward posts from your own network, so
+it naturally lines up with the connection-degree priority below, without the
+risk of a niche hashtag (e.g. a low-volume tag) returning too few posts to
+work with.
+
+Each post's header timestamp is parsed (from the raw DOM text, before UI
+noise gets stripped) and anything older than `MAX_POST_AGE_HOURS` (default
+12) is skipped entirely — no reaction, no comment — since engaging with a
+post the algorithm has stopped surfacing has no visibility upside.
+
+Within each newly-revealed batch of posts, the connection-degree badge
+(1st/2nd/3rd, or "Suggested"/company-page posts with no badge) is parsed and
+the batch is sorted so 1st-degree connections are tackled first, then
+2nd-degree, then everyone else — engaging with people in your network first
+tends to be more valuable than cold 3rd-degree/suggested posts.
+
+At the end of a run, a one-line summary (`scanned`, `sponsored`, `too-old`,
+`too-short`, `dedup`, `engaged`) prints so you can tell whether the feed
+genuinely had few posts to work with, or whether everything available got
+filtered out.
 
 ## What's next
 

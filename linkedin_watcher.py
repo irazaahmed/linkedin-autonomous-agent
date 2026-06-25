@@ -306,22 +306,32 @@ async def type_humanly(element, text: str):
         await asyncio.sleep(random.uniform(0.04, 0.13))
 
 
-async def get_posts_from_page(page: Page) -> list[dict]:
+async def get_posts_from_page(page: Page) -> tuple[list[dict], dict]:
     """Comment buttons ke zariye posts dhundho — class names change hone se farq nahi padta.
     Har post container per data-bot-id likh dete hain taake baad mein exact post wapas mil sake
-    (preview-text matching unreliable thi, isi se purane comments galat post per chale gaye the)."""
+    (preview-text matching unreliable thi, isi se purane comments galat post per chale gaye the).
+
+    Visible text match ("Comment") ke sath-sath aria-label se bhi match karte hain — Like button
+    ki tarah (README ka challenge #1) LinkedIn kabhi kabhi visible label hata ke sirf aria-label
+    chhod deta hai, ya ek count badge text ke sath jod deta hai ("Comment\\n42") jo exact-match
+    todh deta. Debug counters bhi return karte hain taake 0-posts wali run mein turant pata chale
+    ke selector hi kuch nahi pakad raha, ya buttons mil rahe hain lekin container walk fail ho rahi hai."""
     return await page.evaluate("""
         () => {
             const posts = [];
             const seen = new Set();
             window.__botPostCounter = window.__botPostCounter || 0;
 
-            // Sab Comment buttons dhundho
+            // Sab Comment buttons dhundho — visible text ya aria-label se
             const allButtons = Array.from(document.querySelectorAll('button'));
             const commentBtns = allButtons.filter(btn => {
-                const txt = btn.innerText.trim().toLowerCase();
-                return txt === 'comment' || txt === 'add a comment';
+                const txt = (btn.innerText || '').trim().toLowerCase();
+                if (txt === 'comment' || txt === 'add a comment') return true;
+                const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+                return /^comment\\b/.test(aria);
             });
+
+            let noContainer = 0;
 
             for (const btn of commentBtns) {
                 // Button se upar jao post container tak
@@ -338,7 +348,7 @@ async def get_posts_from_page(page: Page) -> list[dict]:
                     node = node.parentElement;
                 }
 
-                if (!postContainer) continue;
+                if (!postContainer) { noContainer++; continue; }
 
                 // Stable ID is post container per likh do (CSS attribute selector ke liye)
                 let botId = postContainer.getAttribute('data-bot-id');
@@ -363,7 +373,11 @@ async def get_posts_from_page(page: Page) -> list[dict]:
                 });
             }
 
-            return posts;
+            return [posts, {
+                totalButtons: allButtons.length,
+                commentBtnsFound: commentBtns.length,
+                noContainer: noContainer,
+            }];
         }
     """)
 
@@ -621,7 +635,7 @@ async def run():
                 await asyncio.sleep(4)
 
             try:
-                posts = await get_posts_from_page(page)
+                posts, scan_debug = await get_posts_from_page(page)
             except Exception as e:
                 print(f"  [!] Scan error: {e}")
                 await asyncio.sleep(3)
@@ -630,6 +644,16 @@ async def run():
 
             if scroll_num == 0:
                 print(f"[*] {len(posts)} posts mile is scroll mein.\n")
+                if not posts:
+                    print(
+                        f"  [DEBUG] Page par {scan_debug['totalButtons']} buttons mile, "
+                        f"{scan_debug['commentBtnsFound']} 'Comment' jaise lage, "
+                        f"{scan_debug['noContainer']} ka post container nahi mila.\n"
+                        "  [DEBUG] Agar commentBtnsFound 0 hai to LinkedIn ne Comment button ka "
+                        "text/aria-label badal diya hai (selector update chahiye). Agar "
+                        "commentBtnsFound > 0 lekin noContainer barabar hai to container-size "
+                        "heuristic (height>250, width>400) fail ho rahi hai.\n"
+                    )
 
             seen_before_scroll = len(seen_ids)
 

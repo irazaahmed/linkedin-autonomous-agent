@@ -399,40 +399,62 @@ async def react_to_post(page: Page, post_id: str, reaction: str) -> bool:
     bypass ho jata hai — same pattern jo comment button aur submit button ke liye
     pehle se use ho raha hai is file mein.
     """
-    try:
-        post = page.locator(f'[data-bot-id="{post_id}"]').first
-        like_btn = post.locator('button[aria-label^="Reaction button state"]').first
+    # Session ke shuru mein LinkedIn ke React handlers abhi "warm" nahi hote —
+    # synthetic mouseover se flyout kabhi pehli baar nahi khulta aur aria-label
+    # update late aata hai, is liye pehle 2-3 reactions aksar fail dikhte the.
+    # Isliye ek retry lagate hain; aur agar button pe pehle se reaction lagi ho
+    # (ya pichle attempt ne laga di ho) to dobara click nahi karte warna toggle
+    # hoke un-react ho jayegi.
+    for attempt in range(2):
+        try:
+            if await _try_react_once(page, post_id, reaction):
+                return True
+        except Exception as e:
+            print(f"  Reaction error: {e}")
+        if attempt == 0:
+            await asyncio.sleep(random.uniform(1.2, 2.0))  # settle hone do, phir dobara
+    return False
 
-        if await like_btn.count() == 0:
-            print("  React button nahi mila.")
-            return False
 
-        if reaction != "like":
-            # Reaction picker (flyout) kholne ke liye hover karo
-            await like_btn.evaluate(
-                "el => { el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})); "
-                "el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true})); }"
-            )
-            await asyncio.sleep(random.uniform(0.8, 1.3))
+async def _try_react_once(page: Page, post_id: str, reaction: str) -> bool:
+    post = page.locator(f'[data-bot-id="{post_id}"]').first
+    like_btn = post.locator('button[aria-label^="Reaction button state"]').first
 
-            option = page.get_by_role("button", name=re.compile(rf"^{reaction}$", re.I)).first
-            if await option.count() > 0:
-                await option.evaluate("el => el.click()")
-            else:
-                # Picker nahi khula to simple Like kar do
-                await like_btn.evaluate("el => el.click()")
-        else:
-            await like_btn.evaluate("el => el.click()")
-
-        await asyncio.sleep(random.uniform(1, 2))
-
-        # Verify: button state ne actually "no reaction" se hat ke kuch aur dikhana chahiye
-        new_state = await like_btn.get_attribute("aria-label")
-        return bool(new_state) and "no reaction" not in new_state.lower()
-
-    except Exception as e:
-        print(f"  Reaction error: {e}")
+    if await like_btn.count() == 0:
+        print("  React button nahi mila.")
         return False
+
+    # Pehle se reaction lagi hai? To dobara click mat karo (toggle-off se bachao).
+    existing = await like_btn.get_attribute("aria-label")
+    if existing and "no reaction" not in existing.lower():
+        return True
+
+    if reaction != "like":
+        # Reaction picker (flyout) kholne ke liye hover karo
+        await like_btn.evaluate(
+            "el => { el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true})); "
+            "el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true})); }"
+        )
+        await asyncio.sleep(random.uniform(0.8, 1.3))
+
+        option = page.get_by_role("button", name=re.compile(rf"^{reaction}$", re.I)).first
+        if await option.count() > 0:
+            await option.evaluate("el => el.click()")
+        else:
+            # Picker nahi khula to simple Like kar do
+            await like_btn.evaluate("el => el.click()")
+    else:
+        await like_btn.evaluate("el => el.click()")
+
+    # Verify: aria-label update kabhi late aata hai, is liye ~4s tak poll karo —
+    # ek single 1-2s check false-negative de raha tha (jis se dedup miss + agle
+    # run mein dobara react/un-react ka risk banta tha).
+    for _ in range(8):
+        await asyncio.sleep(0.5)
+        new_state = await like_btn.get_attribute("aria-label")
+        if new_state and "no reaction" not in new_state.lower():
+            return True
+    return False
 
 
 async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool:
@@ -716,6 +738,7 @@ async def run(
                 return
 
         processed   = 0
+        attempt_num = 0
         seen_ids    = set()
         engaged     = load_engaged(engaged_path)
         print(f"[*] {len(engaged)} posts already engaged in previous runs (skip list loaded).\n")
@@ -804,7 +827,8 @@ async def run(
                     scan_stats["dedup"] += 1
                     continue
 
-                print(f"[POST {processed + 1}/{MAX_POSTS}]")
+                attempt_num += 1
+                print(f"[POST {processed + 1}/{MAX_POSTS}]  (attempt #{attempt_num})")
                 print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
 
                 reaction = pick_reaction(text)
@@ -827,7 +851,7 @@ async def run(
                     continue
 
                 print(f"  Generating comment...")
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 try:
                     comment = await loop.run_in_executor(_executor, generate_comment, text, persona_file)
                 except Exception as e:
@@ -844,9 +868,17 @@ async def run(
 
                 if success:
                     processed += 1
-                    if fp in engaged:
-                        engaged[fp]["commented"] = True
-                        save_engaged(engaged, engaged_path)
+                    # Reaction fail hui thi to fp abhi engaged mein nahi hoga —
+                    # phir bhi comment post ho gaya, is liye entry create/update
+                    # karo warna ye commented post dedup se chhoot jayega aur
+                    # agle run mein dobara comment ho sakta hai.
+                    entry = engaged.get(fp) or {
+                        "timestamp": datetime.now().isoformat(),
+                        "preview": text[:80],
+                    }
+                    entry["commented"] = True
+                    engaged[fp] = entry
+                    save_engaged(engaged, engaged_path)
                     print(f"  [OK] Done! ({processed}/{MAX_POSTS})\n")
                 else:
                     print("  [FAIL] Next post pe ja raha hun.\n")

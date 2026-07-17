@@ -751,9 +751,13 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             # 'Comment button se container tak climb' heuristic reuse karke,
             # jo naya container purane container ki (~same) top-position per
             # ho usi ko yehi post maan kar dobara tag karte hain.
+            # NOTE: Playwright ka evaluate() expression ke baad sirf EK arg
+            # leta hai — do alag positional args pass karna TypeError deta
+            # hai (isi ne ek poora run "switch fail" dikhaya jabke switch
+            # asal mein ho chuka tha). Is liye dono values ek object mein.
             recovered = await page.evaluate(
                 """
-                (oldTop, targetId) => {
+                ({ oldTop, targetId }) => {
                     const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
                         const txt = (btn.innerText || '').trim().toLowerCase();
                         if (txt === 'comment' || txt === 'add a comment') return true;
@@ -780,8 +784,7 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                     return { found: true, bestDist };
                 }
                 """,
-                container_top,
-                post_id,
+                {"oldTop": container_top, "targetId": post_id},
             )
             if not recovered["found"]:
                 print(

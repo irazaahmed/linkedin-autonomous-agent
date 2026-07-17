@@ -4,79 +4,156 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LinkedIn Agent — Control Panel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>LinkedIn Agent</h1>
-      <p class="sub">Local control panel — runs on your machine only</p>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/>
+        </svg>
+      </div>
+      <div>
+        <h1>LinkedIn Agent</h1>
+        <p class="sub">Autonomous engagement &mdash; local control panel</p>
+      </div>
     </div>
-    <div id="statusPill" class="pill pill-idle">Idle</div>
+    <div id="statusPill" class="pill pill-idle"><span class="pill-dot"></span><span id="statusText">Idle</span></div>
   </header>
 
   <main>
     <section class="panel">
       <h2>Run an agent</h2>
       <div class="agent-grid">
-        <div class="agent-card">
+        <article class="agent-card card-personal">
           <div class="agent-card-head">
-            <span class="agent-dot dot-personal"></span>
-            <h3>Personal Profile</h3>
+            <div class="agent-avatar avatar-personal" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Personal Profile</h3>
+              <p class="agent-desc">Reacts &amp; comments on your home feed as you.</p>
+            </div>
           </div>
-          <p class="agent-desc">Reacts &amp; comments on your home feed as you.</p>
-          <label class="field">
-            Posts this run
-            <input type="number" id="maxPostsPersonal" min="1" max="15" value="5">
-          </label>
-          <button class="btn btn-primary" data-agent="personal" id="runPersonal">Run Personal</button>
-        </div>
+          <p class="agent-meta" id="metaPersonal">No activity yet</p>
+          <div class="agent-controls">
+            <label class="field">
+              Posts
+              <input type="number" id="maxPostsPersonal" min="1" max="15" value="5">
+            </label>
+            <button class="btn btn-primary" data-agent="personal" id="runPersonal">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              Run Personal
+            </button>
+          </div>
+        </article>
 
-        <div class="agent-card">
+        <article class="agent-card card-cybrum">
           <div class="agent-card-head">
-            <span class="agent-dot dot-cybrum"></span>
-            <h3>Cybrum Solutions Page</h3>
+            <div class="agent-avatar avatar-cybrum" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/>
+                <path d="M9 9h.01M9 12h.01M9 15h.01M9 18h.01"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Cybrum Solutions Page</h3>
+              <p class="agent-desc">Engages on the feed as the company page.</p>
+            </div>
           </div>
-          <p class="agent-desc">Engages on the feed as the Cybrum Solutions company page.</p>
-          <label class="field">
-            Posts this run
-            <input type="number" id="maxPostsCybrum" min="1" max="15" value="5">
-          </label>
-          <button class="btn btn-secondary" data-agent="cybrum" id="runCybrum">Run Cybrum Page</button>
-        </div>
+          <p class="agent-meta" id="metaCybrum">No activity yet</p>
+          <div class="agent-controls">
+            <label class="field">
+              Posts
+              <input type="number" id="maxPostsCybrum" min="1" max="15" value="5">
+            </label>
+            <button class="btn btn-secondary" data-agent="cybrum" id="runCybrum">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              Run Cybrum Page
+            </button>
+          </div>
+        </article>
       </div>
 
       <div id="runningBar" class="running-bar hidden">
+        <div class="running-progress" id="runningProgress"></div>
         <div class="running-info">
-          <span class="spinner"></span>
-          <span id="runningLabel">Running…</span>
+          <span class="spinner" id="runSpinner"></span>
+          <span id="runningLabel">Running&hellip;</span>
         </div>
         <div class="running-actions">
-          <button class="btn btn-warn hidden" id="continueBtn">I've logged in — continue</button>
-          <button class="btn btn-danger" id="stopBtn">Stop</button>
+          <button class="btn btn-warn hidden" id="continueBtn">I've logged in &mdash; continue</button>
+          <button class="btn btn-danger" id="stopBtn">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+            Stop
+          </button>
         </div>
       </div>
     </section>
 
     <section class="panel">
       <h2>Live console</h2>
-      <pre id="console" class="console"></pre>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="tdot tdot-red"></span><span class="tdot tdot-yellow"></span><span class="tdot tdot-green"></span>
+          <span class="terminal-title">agent output</span>
+          <button class="terminal-clear" id="clearConsole" title="Clear console">Clear</button>
+        </div>
+        <pre id="console" class="console" data-empty="Console output appears here when a run starts&hellip;"></pre>
+      </div>
     </section>
 
     <section class="panel">
       <h2>Activity</h2>
-      <div class="cards" id="statCards">
-        <div class="card"><div class="value" id="statTotal">0</div><div class="label">Posts processed</div></div>
-        <div class="card"><div class="value" id="statSuccess">0</div><div class="label">Comments posted</div></div>
-        <div class="card"><div class="value" id="statRate">0%</div><div class="label">Success rate</div></div>
-        <div class="card"><div class="value" id="statReacted">0</div><div class="label">Reactions given</div></div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-top">
+            <span class="card-icon icon-blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 13l4-4 4 4 5-6"/></svg>
+            </span>
+            <div class="value" id="statTotal">0</div>
+          </div>
+          <div class="label">Posts processed</div>
+        </div>
+        <div class="card">
+          <div class="card-top">
+            <span class="card-icon icon-aqua">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-8.4 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l2-5.8a8.38 8.38 0 0 1-.9-3.8 8.4 8.4 0 0 1 8.4-8.4 8.5 8.5 0 0 1 8.5 8.5z"/></svg>
+            </span>
+            <div class="value" id="statSuccess">0</div>
+          </div>
+          <div class="label">Comments posted</div>
+        </div>
+        <div class="card">
+          <div class="card-top">
+            <span class="card-icon icon-violet">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14l-3-3"/></svg>
+            </span>
+            <div class="value" id="statRate">0%</div>
+          </div>
+          <div class="label">Success rate</div>
+          <div class="meter"><div class="meter-fill" id="rateMeter"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-top">
+            <span class="card-icon icon-orange">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+            </span>
+            <div class="value" id="statReacted">0</div>
+          </div>
+          <div class="label">Reactions given</div>
+        </div>
       </div>
       <p class="breakdown" id="agentBreakdown"></p>
 
       <div class="charts">
         <div class="chart-box">
-          <h3>Daily activity</h3>
+          <h3>Daily activity <span class="chart-note">last 14 days</span></h3>
           <canvas id="dailyChart" height="220"></canvas>
         </div>
         <div class="chart-box">
@@ -85,19 +162,21 @@
         </div>
       </div>
 
-      <h3>Recent comments</h3>
+      <h3 class="table-title">Recent comments</h3>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Timestamp</th><th>Agent</th><th>Reaction</th><th>Status</th><th>Comment</th></tr>
+            <tr><th>When</th><th>Agent</th><th>Reaction</th><th>Status</th><th>Comment</th></tr>
           </thead>
           <tbody id="recentBody">
-            <tr><td colspan="5">No data yet.</td></tr>
+            <tr><td colspan="5" class="empty-row">No activity yet &mdash; run an agent to see results here.</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </main>
+
+  <footer class="footer">Runs locally on 127.0.0.1 &middot; nothing leaves this machine</footer>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

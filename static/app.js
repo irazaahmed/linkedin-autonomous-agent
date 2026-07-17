@@ -16,6 +16,10 @@
     like: "blue", love: "magenta", celebrate: "orange", support: "aqua",
     insightful: "violet", funny: "yellow", unknown: "muted",
   };
+  const REACTION_EMOJI = {
+    like: "\u{1F44D}", love: "❤️", celebrate: "\u{1F389}",
+    support: "\u{1F91D}", insightful: "\u{1F4A1}", funny: "\u{1F602}",
+  };
 
   const mql = window.matchMedia("(prefers-color-scheme: light)");
   const theme = () => (mql.matches ? PALETTE.light : PALETTE.dark);
@@ -23,8 +27,10 @@
   const $ = (id) => document.getElementById(id);
   const consoleEl = $("console");
   const statusPill = $("statusPill");
+  const statusText = $("statusText");
   const runningBar = $("runningBar");
   const runningLabel = $("runningLabel");
+  const runSpinner = $("runSpinner");
   const continueBtn = $("continueBtn");
   const stopBtn = $("stopBtn");
   const runBtns = { personal: $("runPersonal"), cybrum: $("runCybrum") };
@@ -37,9 +43,9 @@
 
   function classifyLine(line) {
     if (/\[OK\]/.test(line)) return "log-ok";
-    if (/\[FAIL\]|error|Error/.test(line)) return "log-fail";
-    if (/\[!\]|waiting|Enter/.test(line)) return "log-warn";
-    if (/^={5,}/.test(line.trim())) return "log-dim";
+    if (/\[FAIL\]|\[!\]|error|Error/.test(line)) return "log-fail";
+    if (/\[SKIP\]|\[WARN\]|waiting|Enter/.test(line)) return "log-warn";
+    if (/^={5,}|^─{5,}/.test(line.trim())) return "log-dim";
     return "";
   }
 
@@ -66,17 +72,24 @@
       failed: "Failed",
       stopped: "Stopped",
     }[status] || status;
-    statusPill.textContent = agent ? `${label} — ${AGENT_LABEL[agent] || agent}` : label;
+    statusText.textContent = agent ? `${label} — ${AGENT_LABEL[agent] || agent}` : label;
 
     const isActive = status === "running" || status === "waiting_login";
-    runningBar.classList.toggle("hidden", !isActive && status !== "completed" && status !== "failed" && status !== "stopped");
+    const showBar = isActive || ["completed", "failed", "stopped"].includes(status);
+    runningBar.classList.toggle("hidden", !showBar);
+    runningBar.classList.toggle("is-active", isActive);
+    runSpinner.classList.toggle("paused", !isActive);
+
     if (isActive) {
-      runningBar.classList.remove("hidden");
       runningLabel.textContent = status === "waiting_login"
         ? "Waiting for you to finish logging in in the browser window…"
         : `Running ${AGENT_LABEL[agent] || agent}…`;
-    } else if (status === "completed" || status === "failed" || status === "stopped") {
-      runningLabel.textContent = status === "completed" ? "Run finished." : status === "failed" ? "Run failed — check the console." : "Run stopped.";
+    } else if (status === "completed") {
+      runningLabel.textContent = "Run finished.";
+    } else if (status === "failed") {
+      runningLabel.textContent = "Run failed — check the console.";
+    } else if (status === "stopped") {
+      runningLabel.textContent = "Run stopped.";
     }
     continueBtn.classList.toggle("hidden", status !== "waiting_login");
     stopBtn.classList.toggle("hidden", !isActive);
@@ -123,27 +136,33 @@
   runBtns.cybrum.addEventListener("click", () => runAgent("cybrum"));
   stopBtn.addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
   continueBtn.addEventListener("click", () => fetch("/api/continue", { method: "POST" }));
-
-  function fmtPct(n) { return `${n}%`; }
+  $("clearConsole").addEventListener("click", () => { consoleEl.textContent = ""; });
 
   function renderCharts(stats) {
     const t = theme();
-    const dailyCtx = $("dailyChart");
-    const reactionCtx = $("reactionChart");
+
+    // Sirf aakhri 14 din — poori history bars ko itna patla kar deti hai ke
+    // chart parhna mushkil ho jata hai.
+    const n = 14;
+    const days = stats.days.slice(-n);
+    const dailyTotal = stats.daily_total.slice(-n);
+    const dailySuccess = stats.daily_success.slice(-n);
+    const dayLabels = days.map((d) => d.slice(5));  // "2026-07-17" -> "07-17"
 
     if (dailyChart) dailyChart.destroy();
-    dailyChart = new Chart(dailyCtx, {
+    dailyChart = new Chart($("dailyChart"), {
       type: "bar",
       data: {
-        labels: stats.days,
+        labels: dayLabels,
         datasets: [
-          { label: "Processed", data: stats.daily_total, backgroundColor: t.blue, borderRadius: 4, maxBarThickness: 24 },
-          { label: "Successful", data: stats.daily_success, backgroundColor: t.aqua, borderRadius: 4, maxBarThickness: 24 },
+          { label: "Processed", data: dailyTotal, backgroundColor: t.blue, borderRadius: 4, maxBarThickness: 24 },
+          { label: "Successful", data: dailySuccess, backgroundColor: t.aqua, borderRadius: 4, maxBarThickness: 24 },
         ],
       },
       options: {
         responsive: true,
-        plugins: { legend: { labels: { color: t.text } } },
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: t.text, boxWidth: 12, boxHeight: 12 } } },
         scales: {
           x: { ticks: { color: t.text }, grid: { display: false } },
           y: { beginAtZero: true, ticks: { color: t.text, precision: 0 }, grid: { color: t.grid } },
@@ -157,27 +176,59 @@
     const colors = stats.reaction_labels.length
       ? stats.reaction_labels.map((l) => t[REACTION_COLOR_KEY[l] || "muted"])
       : [t.grid];
-    reactionChart = new Chart(reactionCtx, {
+    reactionChart = new Chart($("reactionChart"), {
       type: "doughnut",
       data: { labels, datasets: [{ data: values, backgroundColor: colors, borderColor: t.surface, borderWidth: 2 }] },
-      options: { responsive: true, plugins: { legend: { position: "bottom", labels: { color: t.text } } } },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: "62%",
+        plugins: { legend: { position: "bottom", labels: { color: t.text, boxWidth: 12, boxHeight: 12 } } },
+      },
     });
+  }
+
+  function esc(s) {
+    return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
   function renderRecent(recent) {
     const body = $("recentBody");
     if (!recent.length) {
-      body.innerHTML = "<tr><td colspan='5'>No data yet.</td></tr>";
+      body.innerHTML = "<tr><td colspan='5' class='empty-row'>No activity yet — run an agent to see results here.</td></tr>";
       return;
     }
     body.innerHTML = recent.map((r) => {
-      const statusCls = r.success ? "ok" : "fail";
-      const statusTxt = r.success ? "Posted" : "Failed";
-      const comment = (r.comment || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const ts = (r.timestamp || "").replace("T", " ").slice(0, 16);
-      return `<tr><td class="ts">${ts}</td><td>${r.agent}</td><td>${r.reaction}</td>` +
-             `<td class="${statusCls}">${statusTxt}</td><td>${comment}</td></tr>`;
+      const agentCls = r.agent === "cybrum" ? "chip-cybrum" : "chip-personal";
+      const agentTxt = r.agent === "cybrum" ? "Cybrum" : "Personal";
+      const emoji = REACTION_EMOJI[r.reaction] || "";
+      const statusChip = r.success
+        ? "<span class='chip chip-ok'>Posted</span>"
+        : "<span class='chip chip-fail'>Failed</span>";
+      return `<tr>
+        <td class="ts">${ts}</td>
+        <td><span class="chip ${agentCls}">${agentTxt}</span></td>
+        <td class="reaction-cell"><span class="reaction-emoji">${emoji}</span>${esc(r.reaction)}</td>
+        <td>${statusChip}</td>
+        <td class="comment-cell" title="${esc(r.comment)}">${esc(r.comment)}</td>
+      </tr>`;
     }).join("\n");
+  }
+
+  function renderAgentMeta(recent) {
+    const latest = { personal: null, cybrum: null };
+    for (const r of recent) {
+      if (!latest[r.agent]) latest[r.agent] = r;
+    }
+    for (const agent of ["personal", "cybrum"]) {
+      const el = $(agent === "personal" ? "metaPersonal" : "metaCybrum");
+      const r = latest[agent];
+      if (!r) { el.textContent = "No activity yet"; continue; }
+      const ts = (r.timestamp || "").replace("T", " ").slice(0, 16);
+      const emoji = REACTION_EMOJI[r.reaction] || "";
+      el.textContent = `Last engagement: ${ts} ${emoji}`;
+    }
   }
 
   async function loadStats() {
@@ -185,12 +236,14 @@
     const stats = await res.json();
     $("statTotal").textContent = stats.total;
     $("statSuccess").textContent = stats.successful;
-    $("statRate").textContent = fmtPct(stats.success_rate);
+    $("statRate").textContent = `${stats.success_rate}%`;
     $("statReacted").textContent = stats.reacted;
+    $("rateMeter").style.width = `${Math.min(100, stats.success_rate)}%`;
     $("agentBreakdown").textContent =
       `Personal: ${stats.personal_total} posts   ·   Cybrum: ${stats.cybrum_total} posts`;
     renderCharts(stats);
     renderRecent(stats.recent);
+    renderAgentMeta(stats.recent);
   }
 
   mql.addEventListener("change", () => loadStats());

@@ -85,9 +85,19 @@ async def _dump_switcher_dom(page, identity_name: str) -> dict:
 
 async def _dump_comment_composer_dom(page, identity_name: str) -> dict:
     """Pehle post ka comment-box kholta hai (sirf focus — koi text/submit nahi),
-    phir us composer ke andar ka actor-switcher DOM capture karta hai, aur
-    Escape se box band kar deta hai. Engage-as ka asli control yahin (composer ke
-    avatar+naam dropdown) hota hai, feed-level button nahi."""
+    phir us composer ke aas-paas ka actor-switcher DOM capture karta hai, aur
+    Escape se box band kar deta hai.
+
+    v1 (ancestor-climb, <img> tag dhoondta tha) 3 alag runs mein kuch nahi mila —
+    root cause: (1) LinkedIn avatars aksar <img> nahi, background-image wale
+    <div>/<span> hote hain, is liye img-check kabhi match hi nahi hui; (2) fixed
+    8-level climb composer ke deeply-nested wrapper divs mein editor ke bohot
+    kareeb hi ruk gaya, us se upar wale row (jahan avatar+switcher hota) tak
+    pahunchi hi nahi. v2 isliye DOM-ancestry chhod kar viewport-proximity use
+    karta hai — editor ke bounding rect ke upar/aas-paas jo bhi clickable
+    element hai (chahe wo kahin bhi DOM mein ho, ancestor ho ya na ho) wahi
+    switcher ka candidate hai, plus poore page mein 'Comment/Post as' jaisa
+    text/aria-label alag se dhoondte hain."""
     opened = await page.evaluate(
         """
         () => {
@@ -108,49 +118,70 @@ async def _dump_comment_composer_dom(page, identity_name: str) -> dict:
         """
         () => {
             const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
-            const describe = el => ({
-                tag: el.tagName.toLowerCase(),
-                role: el.getAttribute('role') || null,
-                ariaLabel: el.getAttribute('aria-label') || null,
-                ariaHaspopup: el.getAttribute('aria-haspopup') || null,
-                title: el.getAttribute('title') || null,
-                alt: el.getAttribute('alt') || null,
-                text: norm(el.innerText).slice(0, 80) || null,
-                cls: norm((el.className || '').toString()).slice(0, 160) || null,
-            });
+            const describe = el => {
+                const r = el.getBoundingClientRect();
+                return {
+                    tag: el.tagName.toLowerCase(),
+                    role: el.getAttribute('role') || null,
+                    ariaLabel: el.getAttribute('aria-label') || null,
+                    ariaHaspopup: el.getAttribute('aria-haspopup') || null,
+                    title: el.getAttribute('title') || null,
+                    alt: el.getAttribute('alt') || null,
+                    text: norm(el.innerText).slice(0, 80) || null,
+                    cls: norm((el.className || '').toString()).slice(0, 160) || null,
+                    rect: { top: Math.round(r.top), left: Math.round(r.left),
+                             w: Math.round(r.width), h: Math.round(r.height) },
+                };
+            };
 
             const editor = document.querySelector(
                 'div.ql-editor[contenteditable="true"], [role="textbox"][contenteditable="true"]'
             );
             if (!editor) return { editorFound: false };
+            const eRect = editor.getBoundingClientRect();
 
-            // editor se UPAR climb karke composer container dhoondo: woh ancestor
-            // jis ke andar editor + avatar img dono hon (actor switcher usi mein
-            // hoga). Class names badalti rehti hain is liye structure se pakadte
-            // hain, selector se nahi.
-            let scope = editor;
-            for (let i = 0; i < 8 && scope.parentElement; i++) {
-                scope = scope.parentElement;
-                if (scope.querySelector('img') &&
-                    scope.querySelectorAll('button, [role="button"]').length >= 2) {
-                    break;
-                }
-            }
+            // Candidate A: koi bhi clickable jo editor ke top se ~220px upar tak,
+            // usi horizontal band mein ho — DOM position se qatai farq nahi
+            // padta, sirf screen per kahan hai wo matter karta hai.
+            const nearby = Array.from(document.querySelectorAll(
+                'button, a[role="button"], [role="button"], [aria-haspopup]'
+            ))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 &&
+                        r.top <= eRect.top + 8 &&
+                        (eRect.top - r.top) < 220;
+                })
+                .slice(0, 25)
+                .map(describe);
 
-            const controls = Array.from(scope.querySelectorAll(
-                'button, a[role="button"], [role="button"], [aria-haspopup], img[alt]'
-            )).slice(0, 40).map(describe);
+            // Candidate B: chhote (avatar-size) elements jinka background-image
+            // set hai — LinkedIn profile photos aksar <img> ke bajaye is tarah
+            // render hote hain.
+            const bgImages = Array.from(document.querySelectorAll('div, span'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 14 || r.width > 60 || r.height < 14 || r.height > 60) return false;
+                    const bg = getComputedStyle(el).backgroundImage;
+                    return bg && bg.includes('url(');
+                })
+                .slice(0, 15)
+                .map(describe);
 
-            // decisive evidence: container ka outerHTML (truncated) — isme switcher
-            // ho to saaf dikh jayega, na ho to confirm ho jayega ke feature hi nahi.
-            const containerHTML = (scope.outerHTML || '').slice(0, 8000);
+            // Candidate C: poore page (composer se bahar bhi — portal-rendered ho
+            // sakta hai) mein 'comment as' / 'post as' jaisa text ya aria-label.
+            const textMatches = Array.from(document.querySelectorAll('[aria-label], button, a'))
+                .filter(el => /comment(ing)?\\s+as|post(ing)?\\s+as/i
+                    .test((el.getAttribute('aria-label') || '') + ' ' + norm(el.innerText)))
+                .slice(0, 15)
+                .map(describe);
 
             return {
                 editorFound: true,
-                scopeTag: scope.tagName.toLowerCase(),
-                scopeCls: norm((scope.className || '').toString()).slice(0, 200),
-                controls,
-                containerHTML,
+                editorRect: { top: Math.round(eRect.top), left: Math.round(eRect.left) },
+                nearby,
+                bgImages,
+                textMatches,
             };
         }
         """

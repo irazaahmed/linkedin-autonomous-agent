@@ -662,7 +662,12 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
         await container.evaluate("el => el.scrollIntoView({block: 'center'})")
         await asyncio.sleep(random.uniform(1.2, 2.0))
 
-        container_top = await container.evaluate("el => el.getBoundingClientRect().top")
+        # Document-absolute top (scroll-independent) — Save ke baad LinkedIn
+        # page scroll shift kar deta hai, is liye viewport-relative top se
+        # compare karna 700px jaise jhoote mismatch deta tha.
+        container_top = await container.evaluate(
+            "el => el.getBoundingClientRect().top + window.scrollY"
+        )
 
         before = await container.evaluate(_FIND_TRIGGER)
         if not before["found"]:
@@ -744,27 +749,30 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
         # poora replace kar diya — dono cases alag treat karte hain.
         still_connected = await container.evaluate("el => el.isConnected")
         if not still_connected:
-            # Node khud replace ho gaya — text-matching se dobara dhoondna
-            # is codebase mein pehle "unreliable" saabit ho chuka hai (galat
-            # post per comment chala gaya tha), is liye content se nahi,
-            # SCREEN POSITION se dhoondte hain: get_posts_from_page wala hi
-            # 'Comment button se container tak climb' heuristic reuse karke,
-            # jo naya container purane container ki (~same) top-position per
-            # ho usi ko yehi post maan kar dobara tag karte hain.
+            # Node khud replace ho gaya — dobara dhoondne ke do zariye,
+            # dono content-text se azaad (text-matching yahan pehle galat
+            # post per comment karwa chuki hai):
+            #   1) Avatar fingerprint (primary): switch ke baad SIRF isi
+            #      post ka switcher-avatar Page ke logo per hota hai — baaki
+            #      har post ka avatar personal photo (before_src) hi rehta
+            #      hai. Jis container ka avatar-src before_src se mukhtalif
+            #      ho, wohi hamara post hai — scroll/layout se bilkul azaad.
+            #   2) Document-absolute position (fallback): viewport-relative
+            #      nahi (Save ke baad scroll shift hone se 700px ka jhoota
+            #      mismatch aa chuka hai), balke scrollY jama kar ke.
             # NOTE: Playwright ka evaluate() expression ke baad sirf EK arg
-            # leta hai — do alag positional args pass karna TypeError deta
-            # hai (isi ne ek poora run "switch fail" dikhaya jabke switch
-            # asal mein ho chuka tha). Is liye dono values ek object mein.
+            # leta hai — is liye saari values ek object mein.
             recovered = await page.evaluate(
                 """
-                ({ oldTop, targetId }) => {
+                ({ oldTopAbs, targetId, beforeSrc }) => {
                     const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
                         const txt = (btn.innerText || '').trim().toLowerCase();
                         if (txt === 'comment' || txt === 'add a comment') return true;
                         const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
                         return /^comment\\b/.test(aria);
                     });
-                    let best = null, bestDist = Infinity;
+                    const containers = [];
+                    const seen = new Set();
                     for (const btn of buttons) {
                         let node = btn.parentElement, postContainer = null;
                         for (let i = 0; i < 25 && node; i++) {
@@ -775,24 +783,54 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                             }
                             node = node.parentElement;
                         }
-                        if (!postContainer) continue;
-                        const dist = Math.abs(postContainer.getBoundingClientRect().top - oldTop);
-                        if (dist < bestDist) { bestDist = dist; best = postContainer; }
+                        if (!postContainer || seen.has(postContainer)) continue;
+                        seen.add(postContainer);
+                        const trig = postContainer.querySelector('[aria-label="Switch to different account"]');
+                        const img = trig ? trig.querySelector('img') : null;
+                        containers.push({
+                            el: postContainer,
+                            src: img ? img.getAttribute('src') : null,
+                            topAbs: postContainer.getBoundingClientRect().top + window.scrollY,
+                        });
                     }
-                    if (!best || bestDist > 60) return { found: false, bestDist };
+
+                    // Primary: jis post ka avatar ab personal photo NAHI raha,
+                    // wohi abhi-switch-hua post hai (unique fingerprint).
+                    const switched = containers.filter(c => c.src && beforeSrc && c.src !== beforeSrc);
+                    if (switched.length === 1) {
+                        switched[0].el.setAttribute('data-bot-id', targetId);
+                        return { found: true, via: 'avatar-src',
+                                 bestDist: Math.abs(switched[0].topAbs - oldTopAbs) };
+                    }
+
+                    // Fallback: absolute position (scroll-independent).
+                    let best = null, bestDist = Infinity;
+                    for (const c of containers) {
+                        const d = Math.abs(c.topAbs - oldTopAbs);
+                        if (d < bestDist) { bestDist = d; best = c.el; }
+                    }
+                    if (!best || bestDist > 150) {
+                        return { found: false, via: 'position', bestDist,
+                                 switchedCount: switched.length, total: containers.length };
+                    }
                     best.setAttribute('data-bot-id', targetId);
-                    return { found: true, bestDist };
+                    return { found: true, via: 'position', bestDist };
                 }
                 """,
-                {"oldTop": container_top, "targetId": post_id},
+                {"oldTopAbs": container_top, "targetId": post_id, "beforeSrc": before_src},
             )
             if not recovered["found"]:
                 print(
-                    "  [!] Switch ke baad is post ka DOM node replace ho gaya, aur "
-                    f"usi position per naya container bhi nahi mila (bestDist={recovered.get('bestDist')})."
+                    "  [!] Switch ke baad is post ka DOM node replace ho gaya, aur wapas "
+                    f"nahi mila (bestDist={recovered.get('bestDist'):.0f}px, "
+                    f"avatar-changed candidates={recovered.get('switchedCount')}, "
+                    f"total containers={recovered.get('total')})."
                 )
                 return False
-            print(f"  [*] Post re-render ke baad, same position per dobara tag kar diya (dist={recovered['bestDist']:.0f}px).")
+            print(
+                f"  [*] Post re-render ke baad dobara tag kar diya "
+                f"(via {recovered['via']}, dist={recovered['bestDist']:.0f}px)."
+            )
             container = await page.locator(f'[data-bot-id="{post_id}"]').element_handle()
             if container is None:
                 print("  [!] Re-tag ke baad bhi container nahi mila.")

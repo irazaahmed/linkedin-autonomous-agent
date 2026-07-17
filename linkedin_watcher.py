@@ -615,15 +615,18 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             el.click();
         }
     """
-    # Reaction button ab poore page ka pehla nahi, USI post ke data-bot-id
-    # scope ke andar wala dhoondte hain — warna dusre post ka avatar switch
-    # ho jata hai jabke react/comment kisi aur post per hota hai.
-    _FIND_AVATAR_SRC = """
-        (postId) => {
-            const post = document.querySelector(`[data-bot-id="${postId}"]`);
-            if (!post) return null;
-            const reactionBtn = post.querySelector('button[aria-label^="Reaction button state"]');
-            if (!reactionBtn) return null;
+    # Ek run (2026-07-17) ne dikhaya: switch ke baad us post ka apna
+    # data-bot-id tag gayab ho gaya (after_src=None) — LinkedIn switch par
+    # us post ke action-bar ka DOM re-render kar deta hai, aur naye elements
+    # per humara khud lagaya tag nahi hota. Isi wajah se poori flow ab
+    # data-bot-id se baar-baar re-query karne ke bajaye EK element-handle
+    # (container) pakad kar usi ke through avatar/reaction-button dhoondti
+    # hai — jab tak underlying DOM node replace na ho (sirf attributes/
+    # children update hon), handle valid rehta hai.
+    _FIND_AVATAR_SRC_IN = """
+        container => {
+            const reactionBtn = container.querySelector('button[aria-label^="Reaction button state"]');
+            if (!reactionBtn) return { reactionBtnFound: false, src: null };
             const rRect = reactionBtn.getBoundingClientRect();
             const avatarImg = Array.from(document.querySelectorAll('img'))
                 .filter(el => {
@@ -634,22 +637,29 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                     return sameRow && isLeftOf;
                 })
                 .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-            return avatarImg ? avatarImg.getAttribute('src') : null;
+            return { reactionBtnFound: true, src: avatarImg ? avatarImg.getAttribute('src') : null };
         }
     """
 
     try:
-        before_src = await page.evaluate(_FIND_AVATAR_SRC, post_id)
-        if not before_src:
-            print("  [!] Identity-avatar (is post ke reaction button ke paas) nahi mila.")
+        container = await page.locator(f'[data-bot-id="{post_id}"]').element_handle()
+        if container is None:
+            print(f"  [!] Post container (data-bot-id='{post_id}') nahi mila.")
             return False
 
-        avatar_target = await page.evaluate(
+        before = await container.evaluate(_FIND_AVATAR_SRC_IN)
+        if not before["reactionBtnFound"]:
+            print("  [!] Is post ka reaction button nahi mila.")
+            return False
+        if not before["src"]:
+            print("  [!] Reaction button mila, lekin uske paas identity-avatar nahi mila.")
+            return False
+        before_src = before["src"]
+
+        avatar_target = await container.evaluate(
             """
-            (postId) => {
-                const post = document.querySelector(`[data-bot-id="${postId}"]`);
-                if (!post) return false;
-                const reactionBtn = post.querySelector('button[aria-label^="Reaction button state"]');
+            container => {
+                const reactionBtn = container.querySelector('button[aria-label^="Reaction button state"]');
                 if (!reactionBtn) return false;
                 const rRect = reactionBtn.getBoundingClientRect();
                 const avatarImg = Array.from(document.querySelectorAll('img'))
@@ -676,11 +686,10 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                 }
                 return false;
             }
-            """,
-            post_id,
+            """
         )
         if not avatar_target:
-            print("  [!] Identity-avatar (is post ke reaction button ke paas) nahi mila.")
+            print("  [!] Identity-avatar mila tha lekin click ke liye clickable ancestor nahi mila.")
             return False
 
         await asyncio.sleep(random.uniform(1.5, 2.5))
@@ -726,7 +735,23 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
         await save_el.evaluate(_DISPATCH_CLICK)
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
-        after_src = await page.evaluate(_FIND_AVATAR_SRC, post_id)
+        # Container ka DOM node abhi bhi page mein laga hai ya switch ne use
+        # replace kar diya — dono cases alag treat karte hain taake debug
+        # output confusing na ho.
+        still_connected = await container.evaluate("el => el.isConnected")
+        if not still_connected:
+            print(
+                "  [!] Switch ke baad is post ka DOM node hi replace ho gaya "
+                "(re-render) — dobara scan karke is post ko fresh tag karna hoga."
+            )
+            return False
+
+        # Re-render ne data-bot-id gira diya ho to wapas laga do — post ka
+        # DOM node wahi hai (isConnected true), sirf attribute miss ho sakta hai.
+        await container.evaluate("(el, id) => el.setAttribute('data-bot-id', id)", post_id)
+
+        after = await container.evaluate(_FIND_AVATAR_SRC_IN)
+        after_src = after.get("src") if after.get("reactionBtnFound") else None
 
         if not after_src or after_src == before_src:
             print(f"  [!] Save ke baad bhi identity-avatar nahi badla (switch asar mein nahi aaya).")

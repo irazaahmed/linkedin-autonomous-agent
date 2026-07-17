@@ -590,11 +590,22 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
     run() shuru hote hi ek hi baar call hota tha — isi wajah se sirf pehla
     post Cybrum Solutions se hota tha, baaki sab Ahmed Raza se rehte the).
 
-    Trigger koi standalone button nahi — ek chhota avatar hai jo USI POST ke
-    reaction button ke bilkul left mein, usi row per baitha hota hai (koi
-    aria-label/alt nahi, is liye naam se dhoond nahi sakte). Isko click karne
-    se ek radiogroup-dialog khulta hai jisme 'Select {identity_name}'
-    aria-label wala radio option hota hai, phir Save."""
+    Trigger: post ke action-bar mein `[aria-label="Switch to different
+    account"]` wala element (avatar-badge). Ye aria-label page per unique
+    NAHI hai (left-sidebar ka account-switcher bhi yehi label rakhta hai —
+    ek global `.first` query pehle usi se dhoka kha chuki hai), lekin POST
+    CONTAINER ke andar scope karne se bilkul unambiguous hai. Isko click
+    karne se radiogroup-dialog khulta hai jisme 'Select {identity_name}'
+    aria-label wala radio option hota hai, phir Save.
+
+    Do sabaq jo 4 live-run failures ke baad mile (2026-07-17): (1) LinkedIn
+    off-screen posts ka action-bar avatar lazy-render karta hai — post
+    viewport se bahar ho to img mounted hi nahi hota; (2) elementFromPoint()
+    sirf viewport ke ANDAR wale coordinates per kaam karta hai, off-screen
+    point per hamesha null deta hai. Dono ka ilaaj ek: post ko pehle
+    scrollIntoView karo (waise bhi human jaisa hai — insaan bina post dekhe
+    react nahi karta), aur elementFromPoint ke bajaye trigger ke apne
+    parentElement chain se clickable ancestor dhoondo."""
     # Sirf .click() kabhi kabhi custom LinkedIn components ke React handlers ko
     # nahi jagata — pointerdown/mousedown/mouseup/click ka poora sequence
     # dispatch karta hai, jo real user click ke zyada kareeb hai. Locator.evaluate
@@ -616,28 +627,26 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
         }
     """
     # Ek run (2026-07-17) ne dikhaya: switch ke baad us post ka apna
-    # data-bot-id tag gayab ho gaya (after_src=None) — LinkedIn switch par
-    # us post ke action-bar ka DOM re-render kar deta hai, aur naye elements
-    # per humara khud lagaya tag nahi hota. Isi wajah se poori flow ab
-    # data-bot-id se baar-baar re-query karne ke bajaye EK element-handle
-    # (container) pakad kar usi ke through avatar/reaction-button dhoondti
-    # hai — jab tak underlying DOM node replace na ho (sirf attributes/
-    # children update hon), handle valid rehta hai.
-    _FIND_AVATAR_SRC_IN = """
+    # data-bot-id tag gayab ho gaya — LinkedIn switch par us post ke DOM ka
+    # hissa re-render/replace kar deta hai. Is liye flow EK element-handle
+    # (container) pakad kar usi ke through lookups karti hai, aur Save ke
+    # baad isConnected check se re-render ko handle karti hai.
+    #
+    # Trigger/avatar ab geometry (reaction-button ke left wali row + img
+    # size-filter) se nahi — container ke andar semantic selector se milta
+    # hai. Uske andar ka img current identity ki tasveer hai (before/after
+    # verification isi ke src se hoti hai).
+    _FIND_TRIGGER = """
         container => {
-            const reactionBtn = container.querySelector('button[aria-label^="Reaction button state"]');
-            if (!reactionBtn) return { reactionBtnFound: false, src: null };
-            const rRect = reactionBtn.getBoundingClientRect();
-            const avatarImg = Array.from(document.querySelectorAll('img'))
-                .filter(el => {
-                    const r = el.getBoundingClientRect();
-                    if (r.width < 14 || r.width > 40) return false;
-                    const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
-                    const isLeftOf = (r.left + r.width) <= rRect.left + 4;
-                    return sameRow && isLeftOf;
-                })
-                .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-            return { reactionBtnFound: true, src: avatarImg ? avatarImg.getAttribute('src') : null };
+            const trigger = container.querySelector('[aria-label="Switch to different account"]');
+            if (!trigger) return { found: false };
+            const img = trigger.querySelector('img');
+            const r = trigger.getBoundingClientRect();
+            return {
+                found: true,
+                src: img ? img.getAttribute('src') : null,
+                visible: r.width > 0 && r.height > 0,
+            };
         }
     """
 
@@ -647,56 +656,45 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             print(f"  [!] Post container (data-bot-id='{post_id}') nahi mila.")
             return False
 
+        # Post ko viewport ke center mein lao — off-screen post ka avatar
+        # lazy-render hota hi nahi, aur ye human-like bhi hai (insaan bina
+        # post dekhe react nahi karta).
+        await container.evaluate("el => el.scrollIntoView({block: 'center'})")
+        await asyncio.sleep(random.uniform(1.2, 2.0))
+
         container_top = await container.evaluate("el => el.getBoundingClientRect().top")
 
-        before = await container.evaluate(_FIND_AVATAR_SRC_IN)
-        if not before["reactionBtnFound"]:
-            print("  [!] Is post ka reaction button nahi mila.")
+        before = await container.evaluate(_FIND_TRIGGER)
+        if not before["found"]:
+            print("  [!] Is post mein 'Switch to different account' control nahi mila (post scroll karke bhi).")
             return False
-        if not before["src"]:
-            print("  [!] Reaction button mila, lekin uske paas identity-avatar nahi mila.")
-            return False
-        before_src = before["src"]
+        before_src = before.get("src")
 
-        avatar_target = await container.evaluate(
+        clicked = await container.evaluate(
             """
             container => {
-                const reactionBtn = container.querySelector('button[aria-label^="Reaction button state"]');
-                if (!reactionBtn) return false;
-                const rRect = reactionBtn.getBoundingClientRect();
-                const avatarImg = Array.from(document.querySelectorAll('img'))
-                    .filter(el => {
-                        const r = el.getBoundingClientRect();
-                        if (r.width < 14 || r.width > 40) return false;
-                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
-                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
-                        return sameRow && isLeftOf;
-                    })
-                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-                if (!avatarImg) return { clicked: false, reason: 'no avatar img' };
-
-                const ir = avatarImg.getBoundingClientRect();
-                let node = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
-                const chain = [];
-                for (let i = 0; i < 12 && node; i++) {
-                    chain.push(node.tagName.toLowerCase() + (node.getAttribute('role') ? '[role=' + node.getAttribute('role') + ']' : '') +
-                        (node.hasAttribute('aria-haspopup') ? '[haspopup]' : '') + '(tabIndex=' + node.tabIndex + ')');
-                    const looksClickable = node.tabIndex >= 0 ||
-                        node.getAttribute('role') === 'button' ||
-                        node.hasAttribute('aria-haspopup') ||
-                        node.tagName.toLowerCase() === 'a' ||
-                        node.tagName.toLowerCase() === 'button';
-                    if (looksClickable) { node.click(); return { clicked: true }; }
+                const trigger = container.querySelector('[aria-label="Switch to different account"]');
+                if (!trigger) return { clicked: false, reason: 'trigger click se pehle gayab ho gaya' };
+                // Diagnostic chain ne dikhaya tha: div[aria-label] ke upar ek
+                // focusable <a> (tabIndex=0) wrapper hai — wahi asli clickable
+                // hai. Container tak climb karo, na mile to trigger khud sahi.
+                let node = trigger;
+                for (let i = 0; i < 5 && node && node !== container; i++) {
+                    const tag = node.tagName.toLowerCase();
+                    if (tag === 'a' || tag === 'button' || node.tabIndex >= 0 ||
+                        node.getAttribute('role') === 'button') {
+                        node.click();
+                        return { clicked: true, via: tag };
+                    }
                     node = node.parentElement;
                 }
-                return { clicked: false, reason: 'no clickable ancestor within 12 hops', chain };
+                trigger.click();
+                return { clicked: true, via: 'trigger-direct' };
             }
             """
         )
-        if not avatar_target["clicked"]:
-            print(f"  [!] Identity-avatar click nahi ho saka: {avatar_target.get('reason')}.")
-            if avatar_target.get("chain"):
-                print(f"  [DEBUG] Ancestor chain: {avatar_target['chain']}")
+        if not clicked["clicked"]:
+            print(f"  [!] Identity-switcher click nahi ho saka: {clicked.get('reason')}.")
             return False
 
         await asyncio.sleep(random.uniform(1.5, 2.5))
@@ -801,8 +799,8 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             # DOM node wahi hai (isConnected true), sirf attribute miss ho sakta hai.
             await container.evaluate("(el, id) => el.setAttribute('data-bot-id', id)", post_id)
 
-        after = await container.evaluate(_FIND_AVATAR_SRC_IN)
-        after_src = after.get("src") if after.get("reactionBtnFound") else None
+        after = await container.evaluate(_FIND_TRIGGER)
+        after_src = after.get("src") if after.get("found") else None
 
         if not after_src or after_src == before_src:
             print(f"  [!] Save ke baad bhi identity-avatar nahi badla (switch asar mein nahi aaya).")

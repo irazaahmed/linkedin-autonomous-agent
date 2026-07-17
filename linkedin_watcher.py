@@ -594,26 +594,26 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
     confirm kiya gaya selector chain hai — pehla button[aria-label*="repost
     as"] wala guess kabhi match nahi hua tha kyunke wo control exist hi nahi
     karta."""
-    def _dispatch(el_expr: str) -> str:
-        """Sirf .click() kabhi kabhi custom LinkedIn components ke React
-        handlers ko nahi jagata — pointerdown/mousedown/mouseup/click ka poora
-        sequence dispatch karta hai, jo real user click ke zyada kareeb hai."""
-        return f"""
-            {{
-                const el = {el_expr};
-                if (!el) return false;
-                const rect = el.getBoundingClientRect();
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                const opts = {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window }};
-                el.dispatchEvent(new PointerEvent('pointerdown', opts));
-                el.dispatchEvent(new MouseEvent('mousedown', opts));
-                el.dispatchEvent(new PointerEvent('pointerup', opts));
-                el.dispatchEvent(new MouseEvent('mouseup', opts));
-                el.click();
-                return true;
-            }}
-        """
+    # Sirf .click() kabhi kabhi custom LinkedIn components ke React handlers ko
+    # nahi jagata — pointerdown/mousedown/mouseup/click ka poora sequence
+    # dispatch karta hai, jo real user click ke zyada kareeb hai. Locator.evaluate
+    # apne pehle argument mein matched element khud "el" naam se pass karta hai,
+    # is liye ye ek seedhi arrow-function expression honi chahiye — function
+    # wrapper ke bagair "return" illegal hai (isi wajah se pichli baar
+    # SyntaxError aaya).
+    _DISPATCH_CLICK = """
+        el => {
+            const rect = el.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+            el.dispatchEvent(new PointerEvent('pointerdown', opts));
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new PointerEvent('pointerup', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.click();
+        }
+    """
 
     try:
         before_src = await page.evaluate(
@@ -685,7 +685,7 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
             print(f"  [DEBUG] Dialog ka text: {group_text}")
             return False
 
-        await option.evaluate(_dispatch("el"))
+        await option.evaluate(_DISPATCH_CLICK)
         await asyncio.sleep(random.uniform(0.8, 1.3))
 
         checked = await option.get_attribute("aria-checked")
@@ -715,7 +715,7 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
             print("  [!] Dialog ke andar Save button nahi mila.")
             return False
 
-        await save_el.evaluate(_dispatch("el"))
+        await save_el.evaluate(_DISPATCH_CLICK)
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
         after_src = await page.evaluate(

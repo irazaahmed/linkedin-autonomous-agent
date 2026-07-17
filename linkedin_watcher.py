@@ -581,50 +581,73 @@ async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool
 
 
 async def switch_engage_as(page: Page, identity_name: str) -> bool:
-    """LinkedIn ka 'Comment, react, and repost as' identity switcher use karta hai
-    taake baad ke sab reactions/comments personal profile ke bajaye ek Page
-    (e.g. company) ke naam se hon. Ye ek session-wide setting hai — kisi bhi
-    post ke action-bar se khol sakte hain, scope kisi specific post se nahi
-    bandha — is liye run() shuru hote hi sirf EK BAAR call hota hai.
+    """LinkedIn ka identity-picker use karta hai taake baad ke sab
+    reactions/comments personal profile ke bajaye ek Page (e.g. company) ke
+    naam se hon. Ye ek session-wide setting hai — is liye run() shuru hote hi
+    sirf EK BAAR call hota hai.
 
-    Trigger button ka exact selector live LinkedIn DOM dekh ke nahi banaya ja
-    saka (sirf screenshots se), is liye fail hone par poora diagnostic print
-    karte hain taake agar selector kaam na kare to turant pata chal jaye
-    exact wajah, dobara guess-and-check round trip ki zaroorat na pade."""
+    Trigger koi standalone button nahi — ek chhota avatar hai jo HAR post ke
+    reaction button ke bilkul left mein, usi row per baitha hota hai (koi
+    aria-label/alt nahi, is liye naam se dhoond nahi sakte). Isko click karne
+    se ek radiogroup-dialog khulta hai jisme 'Select {identity_name}'
+    aria-label wala radio option hota hai, phir Save. Live DOM diagnostic se
+    confirm kiya gaya selector chain hai — pehla button[aria-label*="repost
+    as"] wala guess kabhi match nahi hua tha kyunke wo control exist hi nahi
+    karta."""
     try:
-        trigger = page.locator('button[aria-label*="repost as" i]').first
-        if await trigger.count() == 0:
-            buttons_sample = await page.evaluate("""
-                () => Array.from(document.querySelectorAll('button'))
-                    .filter(b => /repost|comment.*as|react.*as/i.test(b.getAttribute('aria-label') || ''))
-                    .slice(0, 10)
-                    .map(b => b.getAttribute('aria-label'))
-            """)
-            print(f"  [!] 'Comment, react, and repost as' switcher button nahi mila.")
-            print(f"  [DEBUG] Kareeb-tar aria-labels mile: {buttons_sample}")
+        avatar_target = await page.evaluate(
+            """
+            () => {
+                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+                if (!reactionBtn) return null;
+                const rRect = reactionBtn.getBoundingClientRect();
+
+                const avatarImg = Array.from(document.querySelectorAll('img'))
+                    .filter(el => {
+                        const r = el.getBoundingClientRect();
+                        if (r.width < 14 || r.width > 40) return false;
+                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                        return sameRow && isLeftOf;
+                    })
+                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+                if (!avatarImg) return null;
+
+                const ir = avatarImg.getBoundingClientRect();
+                let node = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
+                for (let i = 0; i < 6 && node; i++) {
+                    const looksClickable = node.tabIndex >= 0 ||
+                        node.getAttribute('role') === 'button' ||
+                        node.hasAttribute('aria-haspopup') ||
+                        node.tagName.toLowerCase() === 'a' ||
+                        node.tagName.toLowerCase() === 'button';
+                    if (looksClickable) { node.click(); return true; }
+                    node = node.parentElement;
+                }
+                return null;
+            }
+            """
+        )
+        if not avatar_target:
+            print("  [!] Identity-avatar (reaction button ke paas) nahi mila.")
             return False
 
-        await trigger.evaluate("el => el.click()")
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
-        dialog = page.get_by_role("dialog").first
-        if await dialog.count() == 0:
-            print("  [!] 'Comment, react, and repost as' dialog nahi khula (click ka koi asar nahi hua).")
-            return False
-
-        option = dialog.get_by_text(identity_name, exact=False).first
+        option = page.locator(f'[role="radio"][aria-label="Select {identity_name}"]').first
         if await option.count() == 0:
-            dialog_text = (await dialog.inner_text())[:300]
-            print(f"  [!] Dialog mein '{identity_name}' option nahi mila.")
-            print(f"  [DEBUG] Dialog ka text: {dialog_text}")
+            radiogroup = page.locator('[role="radiogroup"]').first
+            group_text = (await radiogroup.inner_text())[:300] if await radiogroup.count() > 0 else "(radiogroup bhi nahi khula)"
+            print(f"  [!] '{identity_name}' ka radio option nahi mila.")
+            print(f"  [DEBUG] Dialog ka text: {group_text}")
             return False
 
         await option.evaluate("el => el.click()")
         await asyncio.sleep(random.uniform(0.5, 1))
 
-        save_btn = dialog.get_by_role("button", name=re.compile(r"^save$", re.I)).first
+        save_btn = page.get_by_role("button", name=re.compile(r"^save$", re.I)).first
         if await save_btn.count() == 0:
-            print(f"  [!] Dialog mein Save button nahi mila.")
+            print("  [!] Dialog mein Save button nahi mila.")
             return False
 
         await save_btn.evaluate("el => el.click()")

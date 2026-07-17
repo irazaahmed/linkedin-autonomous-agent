@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LinkedIn Agent — Control Panel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>LinkedIn Agent</h1>
+      <p class="sub">Local control panel — runs on your machine only</p>
+    </div>
+    <div id="statusPill" class="pill pill-idle">Idle</div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Run an agent</h2>
+      <div class="agent-grid">
+        <div class="agent-card">
+          <div class="agent-card-head">
+            <span class="agent-dot dot-personal"></span>
+            <h3>Personal Profile</h3>
+          </div>
+          <p class="agent-desc">Reacts &amp; comments on your home feed as you.</p>
+          <label class="field">
+            Posts this run
+            <input type="number" id="maxPostsPersonal" min="1" max="15" value="5">
+          </label>
+          <button class="btn btn-primary" data-agent="personal" id="runPersonal">Run Personal</button>
+        </div>
+
+        <div class="agent-card">
+          <div class="agent-card-head">
+            <span class="agent-dot dot-cybrum"></span>
+            <h3>Cybrum Solutions Page</h3>
+          </div>
+          <p class="agent-desc">Engages on the feed as the Cybrum Solutions company page.</p>
+          <label class="field">
+            Posts this run
+            <input type="number" id="maxPostsCybrum" min="1" max="15" value="5">
+          </label>
+          <button class="btn btn-secondary" data-agent="cybrum" id="runCybrum">Run Cybrum Page</button>
+        </div>
+      </div>
+
+      <div id="runningBar" class="running-bar hidden">
+        <div class="running-info">
+          <span class="spinner"></span>
+          <span id="runningLabel">Running…</span>
+        </div>
+        <div class="running-actions">
+          <button class="btn btn-warn hidden" id="continueBtn">I've logged in — continue</button>
+          <button class="btn btn-danger" id="stopBtn">Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Live console</h2>
+      <pre id="console" class="console"></pre>
+    </section>
+
+    <section class="panel">
+      <h2>Activity</h2>
+      <div class="cards" id="statCards">
+        <div class="card"><div class="value" id="statTotal">0</div><div class="label">Posts processed</div></div>
+        <div class="card"><div class="value" id="statSuccess">0</div><div class="label">Comments posted</div></div>
+        <div class="card"><div class="value" id="statRate">0%</div><div class="label">Success rate</div></div>
+        <div class="card"><div class="value" id="statReacted">0</div><div class="label">Reactions given</div></div>
+      </div>
+      <p class="breakdown" id="agentBreakdown"></p>
+
+      <div class="charts">
+        <div class="chart-box">
+          <h3>Daily activity</h3>
+          <canvas id="dailyChart" height="220"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Reaction breakdown</h3>
+          <canvas id="reactionChart" height="220"></canvas>
+        </div>
+      </div>
+
+      <h3>Recent comments</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Timestamp</th><th>Agent</th><th>Reaction</th><th>Status</th><th>Comment</th></tr>
+          </thead>
+          <tbody id="recentBody">
+            <tr><td colspan="5">No data yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

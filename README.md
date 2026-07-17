@@ -174,6 +174,9 @@ run.bat             # first run: log into LinkedIn manually when the browser ope
 Session cookies are saved after the first successful login — subsequent runs
 skip the login step entirely.
 
+Prefer a browser UI over the terminal? `dashboard.bat` starts a local control
+panel at `http://127.0.0.1:5000` — see [Dashboard](#dashboard) below.
+
 ## Configuration (`.env`)
 
 | Key | Default | Meaning |
@@ -210,16 +213,33 @@ voice instead of the personal CEO "I" voice — instead of `persona.md`.
 ## Dashboard
 
 ```bash
-python generate_dashboard.py
+dashboard.bat        # or: python app.py
 ```
 
-Reads every file in `logs/`, aggregates posts processed, success rate,
-reaction breakdown, and daily activity, and writes a self-contained
-`dashboard.html` (charts via Chart.js, no extra Python dependency) — open it
-in any browser. It's gitignored since it's generated from local activity
-logs (real post previews and comment text), not committed source.
+A local Flask control panel at `http://127.0.0.1:5000` — binds to localhost
+only, no auth, single-user by design. It replaces running `run.bat` /
+`python linkedin_watcher_cybrum.py` from a terminal:
 
-Preview with synthetic example data (no real LinkedIn content):
+- **Run / Stop buttons** for each agent (Personal Profile, Cybrum Solutions
+  Page), with a per-run "posts this run" override (passed to the subprocess
+  as `MAX_POSTS`, doesn't touch `.env`).
+- **Live console** streaming the agent's stdout in real time. The agent's
+  end-of-run `input()` prompt (used to keep the browser open for review from
+  a terminal) is answered automatically so the browser closes and the UI
+  returns to idle on its own. The one-time first-login prompt is *not*
+  auto-answered — the dashboard shows an **"I've logged in — continue"**
+  button once it detects that prompt, so the run only proceeds after you've
+  actually completed the Google login in the visible Chrome window.
+- **Activity charts** (daily volume, reaction breakdown) and a recent-comments
+  table, aggregating both agents' `logs/` directories — same data
+  `generate_dashboard.py` reads, just live instead of a static export.
+
+Only one agent runs at a time — both share the same LinkedIn browser session,
+so concurrent runs would fight over it.
+
+`python generate_dashboard.py` still works standalone if you just want a
+static, shareable `dashboard.html` snapshot (gitignored, since it embeds real
+post previews and comment text):
 
 ![Dashboard preview](docs/dashboard-preview.png)
 

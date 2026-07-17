@@ -647,6 +647,8 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             print(f"  [!] Post container (data-bot-id='{post_id}') nahi mila.")
             return False
 
+        container_top = await container.evaluate("el => el.getBoundingClientRect().top")
+
         before = await container.evaluate(_FIND_AVATAR_SRC_IN)
         if not before["reactionBtnFound"]:
             print("  [!] Is post ka reaction button nahi mila.")
@@ -671,25 +673,30 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                         return sameRow && isLeftOf;
                     })
                     .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-                if (!avatarImg) return false;
+                if (!avatarImg) return { clicked: false, reason: 'no avatar img' };
 
                 const ir = avatarImg.getBoundingClientRect();
                 let node = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
-                for (let i = 0; i < 6 && node; i++) {
+                const chain = [];
+                for (let i = 0; i < 12 && node; i++) {
+                    chain.push(node.tagName.toLowerCase() + (node.getAttribute('role') ? '[role=' + node.getAttribute('role') + ']' : '') +
+                        (node.hasAttribute('aria-haspopup') ? '[haspopup]' : '') + '(tabIndex=' + node.tabIndex + ')');
                     const looksClickable = node.tabIndex >= 0 ||
                         node.getAttribute('role') === 'button' ||
                         node.hasAttribute('aria-haspopup') ||
                         node.tagName.toLowerCase() === 'a' ||
                         node.tagName.toLowerCase() === 'button';
-                    if (looksClickable) { node.click(); return true; }
+                    if (looksClickable) { node.click(); return { clicked: true }; }
                     node = node.parentElement;
                 }
-                return false;
+                return { clicked: false, reason: 'no clickable ancestor within 12 hops', chain };
             }
             """
         )
-        if not avatar_target:
-            print("  [!] Identity-avatar mila tha lekin click ke liye clickable ancestor nahi mila.")
+        if not avatar_target["clicked"]:
+            print(f"  [!] Identity-avatar click nahi ho saka: {avatar_target.get('reason')}.")
+            if avatar_target.get("chain"):
+                print(f"  [DEBUG] Ancestor chain: {avatar_target['chain']}")
             return False
 
         await asyncio.sleep(random.uniform(1.5, 2.5))
@@ -736,19 +743,63 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
         # Container ka DOM node abhi bhi page mein laga hai ya switch ne use
-        # replace kar diya — dono cases alag treat karte hain taake debug
-        # output confusing na ho.
+        # poora replace kar diya — dono cases alag treat karte hain.
         still_connected = await container.evaluate("el => el.isConnected")
         if not still_connected:
-            print(
-                "  [!] Switch ke baad is post ka DOM node hi replace ho gaya "
-                "(re-render) — dobara scan karke is post ko fresh tag karna hoga."
+            # Node khud replace ho gaya — text-matching se dobara dhoondna
+            # is codebase mein pehle "unreliable" saabit ho chuka hai (galat
+            # post per comment chala gaya tha), is liye content se nahi,
+            # SCREEN POSITION se dhoondte hain: get_posts_from_page wala hi
+            # 'Comment button se container tak climb' heuristic reuse karke,
+            # jo naya container purane container ki (~same) top-position per
+            # ho usi ko yehi post maan kar dobara tag karte hain.
+            recovered = await page.evaluate(
+                """
+                (oldTop, targetId) => {
+                    const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
+                        const txt = (btn.innerText || '').trim().toLowerCase();
+                        if (txt === 'comment' || txt === 'add a comment') return true;
+                        const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return /^comment\\b/.test(aria);
+                    });
+                    let best = null, bestDist = Infinity;
+                    for (const btn of buttons) {
+                        let node = btn.parentElement, postContainer = null;
+                        for (let i = 0; i < 25 && node; i++) {
+                            const rect = node.getBoundingClientRect();
+                            if (rect.height > 250 && rect.width > 400) {
+                                postContainer = node;
+                                if (rect.height > 500) break;
+                            }
+                            node = node.parentElement;
+                        }
+                        if (!postContainer) continue;
+                        const dist = Math.abs(postContainer.getBoundingClientRect().top - oldTop);
+                        if (dist < bestDist) { bestDist = dist; best = postContainer; }
+                    }
+                    if (!best || bestDist > 60) return { found: false, bestDist };
+                    best.setAttribute('data-bot-id', targetId);
+                    return { found: true, bestDist };
+                }
+                """,
+                container_top,
+                post_id,
             )
-            return False
-
-        # Re-render ne data-bot-id gira diya ho to wapas laga do — post ka
-        # DOM node wahi hai (isConnected true), sirf attribute miss ho sakta hai.
-        await container.evaluate("(el, id) => el.setAttribute('data-bot-id', id)", post_id)
+            if not recovered["found"]:
+                print(
+                    "  [!] Switch ke baad is post ka DOM node replace ho gaya, aur "
+                    f"usi position per naya container bhi nahi mila (bestDist={recovered.get('bestDist')})."
+                )
+                return False
+            print(f"  [*] Post re-render ke baad, same position per dobara tag kar diya (dist={recovered['bestDist']:.0f}px).")
+            container = await page.locator(f'[data-bot-id="{post_id}"]').element_handle()
+            if container is None:
+                print("  [!] Re-tag ke baad bhi container nahi mila.")
+                return False
+        else:
+            # Re-render ne data-bot-id gira diya ho to wapas laga do — post ka
+            # DOM node wahi hai (isConnected true), sirf attribute miss ho sakta hai.
+            await container.evaluate("(el, id) => el.setAttribute('data-bot-id', id)", post_id)
 
         after = await container.evaluate(_FIND_AVATAR_SRC_IN)
         after_src = after.get("src") if after.get("reactionBtnFound") else None

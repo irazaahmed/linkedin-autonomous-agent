@@ -201,22 +201,25 @@ async def _dump_reaction_button_neighborhood(page, identity_name: str) -> dict:
 
 
 async def _dump_identity_flyout(page, identity_name: str) -> dict:
-    """avatarClickTarget ne confirm kiya: asli control
-    `[aria-label="Switch to different account"]` hai — session-wide nahi,
-    HAR POST ke reaction button ke paas apna alag. Ye click karke jo
-    dropdown/menu khulta hai usi mein 'Cybrum Solutions' option hoga. Sirf
-    khol kar padhte hain, kuch select nahi karte — Escape se band karke
-    original state restore kar dete hain (koi reaction/comment nahi hota)."""
-    trigger = page.locator('[aria-label="Switch to different account"]').first
-    if await trigger.count() == 0:
-        return {"triggerFound": False}
+    """v1 bug mila: `page.locator('[aria-label="Switch to different account"]').first`
+    GLOBAL selector hai — poore page per LinkedIn shayad yehi aria-label kayi
+    jagah reuse karta hai (sidebar profile-card switcher, etc.), aur `.first`
+    ne DOM-order mein pehla wala pakad liya — jo sidebar ka apna account-
+    switcher nikla (Ahmed Raza/Cybrum Solutions ka post-level picker nahi).
+    User ne confirm kiya: reaction button ke paas wala avatar click karne se
+    'Ahmed Raza' / 'Cybrum Solutions' list wala chhota dialog khulta hai.
 
-    await trigger.evaluate("el => el.click()")
-    await asyncio.sleep(random.uniform(1.5, 2.5))
-
-    snapshot = await page.evaluate(
+    Fix: SAME position-based lookup dobara karte hain (avatar jo reaction
+    button ke bilkul left mein, same row per hai) aur us EXACT node ko click
+    karte hain — global selector se dobara query nahi karte. Poora
+    find→click→wait→capture ek hi evaluate() call mein hai taake wahi node
+    reference use ho jo humne dhoonda. Capture ab role se nahi, seedha
+    identity_name/'Ahmed Raza' jaisे text se dhoondta hai — kyunke pichli
+    baar role="menu" filter ne sirf unrelated pre-existing sidebar/video
+    menus pakad liye the, jo humare click ka nateeja thi hi nahi."""
+    result = await page.evaluate(
         """
-        () => {
+        async (pageName) => {
             const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
             const describe = el => {
                 const r = el.getBoundingClientRect();
@@ -224,27 +227,88 @@ async def _dump_identity_flyout(page, identity_name: str) -> dict:
                     tag: el.tagName.toLowerCase(),
                     role: el.getAttribute('role') || null,
                     ariaLabel: el.getAttribute('aria-label') || null,
-                    text: norm(el.innerText).slice(0, 80) || null,
+                    text: norm(el.innerText).slice(0, 100) || null,
                     cls: norm((el.className || '').toString()).slice(0, 160) || null,
                     rect: { top: Math.round(r.top), left: Math.round(r.left),
                              w: Math.round(r.width), h: Math.round(r.height) },
                 };
             };
 
-            // Flyout/menu/listbox/dialog — jo bhi role LinkedIn use kare
-            const containers = Array.from(document.querySelectorAll(
-                '[role="menu"], [role="listbox"], [role="dialog"], [role="tooltip"]'
-            )).map(el => ({
-                ...describe(el),
-                html: (el.outerHTML || '').slice(0, 4000),
-                options: Array.from(el.querySelectorAll(
-                    'li, [role="menuitem"], [role="option"], button, a'
-                )).slice(0, 20).map(describe),
-            }));
+            const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+            if (!reactionBtn) return { triggerFound: false, reason: 'no reaction button' };
+            const rRect = reactionBtn.getBoundingClientRect();
 
-            return { containers, containerCount: containers.length };
+            const avatarImg = Array.from(document.querySelectorAll('img'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 14 || r.width > 40) return false;
+                    const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                    const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                    return sameRow && isLeftOf;
+                })
+                .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+            if (!avatarImg) return { triggerFound: false, reason: 'no avatar image found near reaction button' };
+
+            const ir = avatarImg.getBoundingClientRect();
+            const atPoint = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
+
+            // Upar climb karke pehla "clickable-looking" ancestor dhoondo
+            // (role/tabIndex/aria-haspopup/cursor:pointer) — yehi node click
+            // karenge, koi doosri query nahi.
+            let clickTarget = atPoint;
+            for (let i = 0; i < 6 && clickTarget; i++) {
+                const style = getComputedStyle(clickTarget);
+                const looksClickable = clickTarget.tabIndex >= 0 ||
+                    clickTarget.getAttribute('role') === 'button' ||
+                    clickTarget.hasAttribute('aria-haspopup') ||
+                    clickTarget.tagName.toLowerCase() === 'a' ||
+                    clickTarget.tagName.toLowerCase() === 'button';
+                if (looksClickable) break;
+                clickTarget = clickTarget.parentElement;
+            }
+            if (!clickTarget) return { triggerFound: false, reason: 'no clickable ancestor found' };
+
+            const beforeClickInfo = describe(clickTarget);
+            clickTarget.click();
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Poore page mein identity_name aur 'Ahmed Raza' jaisा text dhoondo —
+            // role/tag pe bharosa nahi karte is baar, sirf text per.
+            const findTextMatches = (needle) => Array.from(document.querySelectorAll('body *'))
+                .filter(el => {
+                    if (el.children.length > 3) return false; // leaf-ish elements only
+                    const t = norm(el.innerText);
+                    return t && t.length < 60 && t.includes(needle);
+                })
+                .slice(0, 10)
+                .map(describe);
+
+            const identityMatches = findTextMatches(pageName);
+            const personalMatches = findTextMatches('Ahmed Raza');
+
+            // Aur ek broad net: kuch bhi jo click se pehle DOM mein nahi tha
+            // (naya element) — hum sirf ab ke visible clickable elements ka
+            // ek sample bhi de dete hain jo click point ke qareeb (300px) hon.
+            const cx = ir.left, cy = ir.top;
+            const nearClickPoint = Array.from(document.querySelectorAll('button, a, li, [role]'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) return false;
+                    return Math.abs(r.top - cy) < 300 && Math.abs(r.left - cx) < 300;
+                })
+                .slice(0, 25)
+                .map(describe);
+
+            return {
+                triggerFound: true,
+                clickedElement: beforeClickInfo,
+                identityMatches,
+                personalMatches,
+                nearClickPoint,
+            };
         }
-        """
+        """,
+        identity_name,
     )
 
     try:
@@ -253,7 +317,7 @@ async def _dump_identity_flyout(page, identity_name: str) -> dict:
         pass
     await asyncio.sleep(0.5)
 
-    return {"triggerFound": True, **snapshot}
+    return result
 
 
 async def _dump_comment_composer_dom(page, identity_name: str) -> dict:

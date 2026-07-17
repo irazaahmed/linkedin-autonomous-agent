@@ -675,6 +675,21 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             return False
         before_src = before.get("src")
 
+        # Post ke andar ke data-derived componentkeys record karo — LinkedIn ke
+        # naye DOM mein har post ke elements per `componentkey` hota hai. Kuch
+        # random UUIDs hain (re-render per badal jate hain) lekin kuch post ke
+        # apne data-token se bante hain (e.g. "commentBox-CgsIg...") — wo
+        # re-render ke BAAD bhi wahi rehte hain, is liye node-replacement ke
+        # baad post ko wapas dhoondhne ka sab se pakka zariya yehi hai.
+        anchor_keys = await container.evaluate(
+            """
+            container => Array.from(container.querySelectorAll('[componentkey]'))
+                .map(e => e.getAttribute('componentkey'))
+                .filter(k => k && k.length > 24 && !/^[0-9a-f]{8}-[0-9a-f]{4}/.test(k))
+                .slice(0, 30)
+            """
+        )
+
         clicked = await container.evaluate(
             """
             container => {
@@ -711,6 +726,19 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             print(f"  [!] '{identity_name}' ka radio option nahi mila.")
             print(f"  [DEBUG] Dialog ka text: {group_text}")
             return False
+
+        # LinkedIn har post ki switched identity YAAD rakhta hai (pichle runs
+        # ke switch persist hote hain). Agar ye post pehle se hi is identity
+        # per hai to Save ki zaroorat nahi — Save skip karne se re-render bhi
+        # nahi hota, jo recovery ka poora masla hi khatam kar deta hai. Aur
+        # dobara Save karne per after_src == before_src hone se ye function
+        # jhoota fail deta.
+        already = await option.get_attribute("aria-checked")
+        if already == "true":
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(random.uniform(0.8, 1.4))
+            print(f"  [OK] Ye post pehle se '{identity_name}' per hai — switch ki zaroorat nahi.")
+            return True
 
         await option.evaluate(_DISPATCH_CLICK)
         await asyncio.sleep(random.uniform(0.8, 1.3))
@@ -764,13 +792,14 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
             # leta hai — is liye saari values ek object mein.
             recovered = await page.evaluate(
                 """
-                ({ oldTopAbs, targetId, beforeSrc }) => {
+                ({ oldTopAbs, targetId, beforeSrc, anchorKeys }) => {
                     const buttons = Array.from(document.querySelectorAll('button')).filter(btn => {
                         const txt = (btn.innerText || '').trim().toLowerCase();
                         if (txt === 'comment' || txt === 'add a comment') return true;
                         const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
                         return /^comment\\b/.test(aria);
                     });
+                    const keySet = new Set(anchorKeys || []);
                     const containers = [];
                     const seen = new Set();
                     for (const btn of buttons) {
@@ -787,15 +816,34 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                         seen.add(postContainer);
                         const trig = postContainer.querySelector('[aria-label="Switch to different account"]');
                         const img = trig ? trig.querySelector('img') : null;
+                        let keyHits = 0;
+                        if (keySet.size) {
+                            for (const e of postContainer.querySelectorAll('[componentkey]')) {
+                                if (keySet.has(e.getAttribute('componentkey'))) keyHits++;
+                            }
+                        }
                         containers.push({
                             el: postContainer,
                             src: img ? img.getAttribute('src') : null,
                             topAbs: postContainer.getBoundingClientRect().top + window.scrollY,
+                            keyHits,
                         });
                     }
 
-                    // Primary: jis post ka avatar ab personal photo NAHI raha,
-                    // wohi abhi-switch-hua post hai (unique fingerprint).
+                    // 1) Primary: data-derived componentkey overlap — post ke
+                    // apne token se bane keys re-render survive karte hain,
+                    // is liye ye scroll/layout/avatar sab se azaad hai.
+                    const keyed = containers.filter(c => c.keyHits > 0)
+                        .sort((a, b) => b.keyHits - a.keyHits);
+                    if (keyed.length && (keyed.length === 1 || keyed[0].keyHits > keyed[1].keyHits)) {
+                        keyed[0].el.setAttribute('data-bot-id', targetId);
+                        return { found: true, via: 'componentkey', keyHits: keyed[0].keyHits,
+                                 bestDist: Math.abs(keyed[0].topAbs - oldTopAbs) };
+                    }
+
+                    // 2) Avatar fingerprint — sirf tab jab EXACTLY ek post ka
+                    // avatar badla ho (LinkedIn purane switches yaad rakhta
+                    // hai, is liye kai posts ka avatar badla ho sakta hai).
                     const switched = containers.filter(c => c.src && beforeSrc && c.src !== beforeSrc);
                     if (switched.length === 1) {
                         switched[0].el.setAttribute('data-bot-id', targetId);
@@ -803,7 +851,7 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                                  bestDist: Math.abs(switched[0].topAbs - oldTopAbs) };
                     }
 
-                    // Fallback: absolute position (scroll-independent).
+                    // 3) Fallback: document-absolute position.
                     let best = null, bestDist = Infinity;
                     for (const c of containers) {
                         const d = Math.abs(c.topAbs - oldTopAbs);
@@ -811,20 +859,28 @@ async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool
                     }
                     if (!best || bestDist > 150) {
                         return { found: false, via: 'position', bestDist,
+                                 anchorKeyCount: keySet.size, keyedCount: keyed.length,
                                  switchedCount: switched.length, total: containers.length };
                     }
                     best.setAttribute('data-bot-id', targetId);
                     return { found: true, via: 'position', bestDist };
                 }
                 """,
-                {"oldTopAbs": container_top, "targetId": post_id, "beforeSrc": before_src},
+                {
+                    "oldTopAbs": container_top,
+                    "targetId": post_id,
+                    "beforeSrc": before_src,
+                    "anchorKeys": anchor_keys,
+                },
             )
             if not recovered["found"]:
                 print(
                     "  [!] Switch ke baad is post ka DOM node replace ho gaya, aur wapas "
                     f"nahi mila (bestDist={recovered.get('bestDist'):.0f}px, "
-                    f"avatar-changed candidates={recovered.get('switchedCount')}, "
-                    f"total containers={recovered.get('total')})."
+                    f"anchor-keys={recovered.get('anchorKeyCount')}, "
+                    f"key-matched containers={recovered.get('keyedCount')}, "
+                    f"avatar-changed={recovered.get('switchedCount')}, "
+                    f"total={recovered.get('total')})."
                 )
                 return False
             print(

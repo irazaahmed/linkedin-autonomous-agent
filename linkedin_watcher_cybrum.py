@@ -83,6 +83,79 @@ async def _dump_switcher_dom(page, identity_name: str) -> dict:
     return snapshot
 
 
+async def _dump_reaction_button_neighborhood(page, identity_name: str) -> dict:
+    """User ne bataya: switcher comment composer mein nahi, seedha post ke
+    Reaction (Like) button ke paas hota hai — wahan chhoti si tasveer (current
+    engage-as identity ka avatar) dikhti hai, usi per click karke Cybrum
+    Solutions select hota hai. Composer kholne ki zaroorat nahi — pehle post
+    ka reaction button dhoondo, uski poori neighborhood (khud ka outerHTML,
+    parent action-bar row ka outerHTML jisme sab siblings hain, aur ~120px ke
+    radius mein koi bhi <img> ya background-image wala chhota element) dump
+    karo. Kuch click nahi karta — sirf padhta hai."""
+    return await page.evaluate(
+        """
+        () => {
+            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+            const describe = el => {
+                const r = el.getBoundingClientRect();
+                return {
+                    tag: el.tagName.toLowerCase(),
+                    role: el.getAttribute('role') || null,
+                    ariaLabel: el.getAttribute('aria-label') || null,
+                    ariaHaspopup: el.getAttribute('aria-haspopup') || null,
+                    alt: el.getAttribute('alt') || null,
+                    text: norm(el.innerText).slice(0, 60) || null,
+                    cls: norm((el.className || '').toString()).slice(0, 160) || null,
+                    rect: { top: Math.round(r.top), left: Math.round(r.left),
+                             w: Math.round(r.width), h: Math.round(r.height) },
+                };
+            };
+
+            const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+            if (!reactionBtn) return { found: false };
+
+            const rRect = reactionBtn.getBoundingClientRect();
+            const parent = reactionBtn.parentElement;
+            const grandparent = parent ? parent.parentElement : null;
+
+            // Radius search: koi bhi <img> ya chhota background-image wala
+            // element jo reaction button ke ~120px andar ho — DOM position se
+            // farq nahi padta, jaisa comment-box search mein bhi kiya tha.
+            const nearbyVisuals = Array.from(document.querySelectorAll('img, div, span'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) return false;
+                    const dx = Math.abs((r.left + r.width / 2) - (rRect.left + rRect.width / 2));
+                    const dy = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2));
+                    if (dx > 160 || dy > 100) return false;
+                    if (el.tagName.toLowerCase() === 'img') return true;
+                    const bg = getComputedStyle(el).backgroundImage;
+                    return bg && bg.includes('url(');
+                })
+                .slice(0, 20)
+                .map(describe);
+
+            // Siblings within the action-bar row (Like/Comment/Repost live here —
+            // an identity badge, if any, is most likely a sibling of this button).
+            const siblings = parent
+                ? Array.from(parent.children).slice(0, 15).map(describe)
+                : [];
+
+            return {
+                found: true,
+                reactionBtnRect: describe(reactionBtn).rect,
+                reactionBtnHTML: (reactionBtn.outerHTML || '').slice(0, 2000),
+                parentHTML: (parent ? parent.outerHTML : '').slice(0, 6000),
+                grandparentTag: grandparent ? grandparent.tagName.toLowerCase() : null,
+                grandparentCls: grandparent ? norm((grandparent.className || '').toString()).slice(0, 200) : null,
+                siblings,
+                nearbyVisuals,
+            };
+        }
+        """
+    )
+
+
 async def _dump_comment_composer_dom(page, identity_name: str) -> dict:
     """Pehle post ka comment-box kholta hai (sirf focus — koi text/submit nahi),
     phir us composer ke aas-paas ka actor-switcher DOM capture karta hai, aur
@@ -197,8 +270,13 @@ async def _dump_comment_composer_dom(page, identity_name: str) -> dict:
 
 
 async def _write_switch_debug(page, identity_name: str) -> Path:
-    """Feed-level + comment-composer dono read-only snapshots ek JSON file mein."""
+    """Feed-level + reaction-button-neighborhood + comment-composer — teeno
+    read-only snapshots ek JSON file mein."""
     feed = await _dump_switcher_dom(page, identity_name)
+    try:
+        reaction = await _dump_reaction_button_neighborhood(page, identity_name)
+    except Exception as e:
+        reaction = {"error": str(e)}
     try:
         composer = await _dump_comment_composer_dom(page, identity_name)
     except Exception as e:
@@ -213,6 +291,7 @@ async def _write_switch_debug(page, identity_name: str) -> Path:
                 "identity_name": identity_name,
                 "url": page.url,
                 "feed_snapshot": feed,
+                "reaction_button_snapshot": reaction,
                 "composer_snapshot": composer,
             },
             indent=2,

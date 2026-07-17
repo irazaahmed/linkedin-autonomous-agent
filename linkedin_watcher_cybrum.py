@@ -200,6 +200,62 @@ async def _dump_reaction_button_neighborhood(page, identity_name: str) -> dict:
     )
 
 
+async def _dump_identity_flyout(page, identity_name: str) -> dict:
+    """avatarClickTarget ne confirm kiya: asli control
+    `[aria-label="Switch to different account"]` hai — session-wide nahi,
+    HAR POST ke reaction button ke paas apna alag. Ye click karke jo
+    dropdown/menu khulta hai usi mein 'Cybrum Solutions' option hoga. Sirf
+    khol kar padhte hain, kuch select nahi karte — Escape se band karke
+    original state restore kar dete hain (koi reaction/comment nahi hota)."""
+    trigger = page.locator('[aria-label="Switch to different account"]').first
+    if await trigger.count() == 0:
+        return {"triggerFound": False}
+
+    await trigger.evaluate("el => el.click()")
+    await asyncio.sleep(random.uniform(1.5, 2.5))
+
+    snapshot = await page.evaluate(
+        """
+        () => {
+            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+            const describe = el => {
+                const r = el.getBoundingClientRect();
+                return {
+                    tag: el.tagName.toLowerCase(),
+                    role: el.getAttribute('role') || null,
+                    ariaLabel: el.getAttribute('aria-label') || null,
+                    text: norm(el.innerText).slice(0, 80) || null,
+                    cls: norm((el.className || '').toString()).slice(0, 160) || null,
+                    rect: { top: Math.round(r.top), left: Math.round(r.left),
+                             w: Math.round(r.width), h: Math.round(r.height) },
+                };
+            };
+
+            // Flyout/menu/listbox/dialog — jo bhi role LinkedIn use kare
+            const containers = Array.from(document.querySelectorAll(
+                '[role="menu"], [role="listbox"], [role="dialog"], [role="tooltip"]'
+            )).map(el => ({
+                ...describe(el),
+                html: (el.outerHTML || '').slice(0, 4000),
+                options: Array.from(el.querySelectorAll(
+                    'li, [role="menuitem"], [role="option"], button, a'
+                )).slice(0, 20).map(describe),
+            }));
+
+            return { containers, containerCount: containers.length };
+        }
+        """
+    )
+
+    try:
+        await page.keyboard.press("Escape")
+    except Exception:
+        pass
+    await asyncio.sleep(0.5)
+
+    return {"triggerFound": True, **snapshot}
+
+
 async def _dump_comment_composer_dom(page, identity_name: str) -> dict:
     """Pehle post ka comment-box kholta hai (sirf focus — koi text/submit nahi),
     phir us composer ke aas-paas ka actor-switcher DOM capture karta hai, aur
@@ -322,6 +378,10 @@ async def _write_switch_debug(page, identity_name: str) -> Path:
     except Exception as e:
         reaction = {"error": str(e)}
     try:
+        flyout = await _dump_identity_flyout(page, identity_name)
+    except Exception as e:
+        flyout = {"error": str(e)}
+    try:
         composer = await _dump_comment_composer_dom(page, identity_name)
     except Exception as e:
         composer = {"error": str(e)}
@@ -336,6 +396,7 @@ async def _write_switch_debug(page, identity_name: str) -> Path:
                 "url": page.url,
                 "feed_snapshot": feed,
                 "reaction_button_snapshot": reaction,
+                "identity_flyout_snapshot": flyout,
                 "composer_snapshot": composer,
             },
             indent=2,

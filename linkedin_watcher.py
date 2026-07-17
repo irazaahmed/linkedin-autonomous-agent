@@ -580,20 +580,21 @@ async def click_and_comment(page: Page, post_id: str, comment_text: str) -> bool
         return False
 
 
-async def switch_engage_as(page: Page, identity_name: str) -> bool:
-    """LinkedIn ka identity-picker use karta hai taake baad ke sab
-    reactions/comments personal profile ke bajaye ek Page (e.g. company) ke
-    naam se hon. Ye ek session-wide setting hai — is liye run() shuru hote hi
-    sirf EK BAAR call hota hai.
+async def switch_engage_as(page: Page, identity_name: str, post_id: str) -> bool:
+    """LinkedIn ka identity-picker use karta hai taake IS SPECIFIC POST per
+    reaction/comment personal profile ke bajaye ek Page (e.g. company) ke
+    naam se ho. Live behaviour (2026-07-17) ne confirm kiya: ye session-wide
+    setting NAHI hai — har post ka apna independent identity-state hota hai.
+    Ek post per switch karne se doosre posts per koi asar nahi padta, is liye
+    ab ye HAR post se pehle, us post ke apne scope mein call hota hai (pehle
+    run() shuru hote hi ek hi baar call hota tha — isi wajah se sirf pehla
+    post Cybrum Solutions se hota tha, baaki sab Ahmed Raza se rehte the).
 
-    Trigger koi standalone button nahi — ek chhota avatar hai jo HAR post ke
+    Trigger koi standalone button nahi — ek chhota avatar hai jo USI POST ke
     reaction button ke bilkul left mein, usi row per baitha hota hai (koi
     aria-label/alt nahi, is liye naam se dhoond nahi sakte). Isko click karne
     se ek radiogroup-dialog khulta hai jisme 'Select {identity_name}'
-    aria-label wala radio option hota hai, phir Save. Live DOM diagnostic se
-    confirm kiya gaya selector chain hai — pehla button[aria-label*="repost
-    as"] wala guess kabhi match nahi hua tha kyunke wo control exist hi nahi
-    karta."""
+    aria-label wala radio option hota hai, phir Save."""
     # Sirf .click() kabhi kabhi custom LinkedIn components ke React handlers ko
     # nahi jagata — pointerdown/mousedown/mouseup/click ka poora sequence
     # dispatch karta hai, jo real user click ke zyada kareeb hai. Locator.evaluate
@@ -614,35 +615,41 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
             el.click();
         }
     """
+    # Reaction button ab poore page ka pehla nahi, USI post ke data-bot-id
+    # scope ke andar wala dhoondte hain — warna dusre post ka avatar switch
+    # ho jata hai jabke react/comment kisi aur post per hota hai.
+    _FIND_AVATAR_SRC = """
+        (postId) => {
+            const post = document.querySelector(`[data-bot-id="${postId}"]`);
+            if (!post) return null;
+            const reactionBtn = post.querySelector('button[aria-label^="Reaction button state"]');
+            if (!reactionBtn) return null;
+            const rRect = reactionBtn.getBoundingClientRect();
+            const avatarImg = Array.from(document.querySelectorAll('img'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 14 || r.width > 40) return false;
+                    const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                    const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                    return sameRow && isLeftOf;
+                })
+                .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+            return avatarImg ? avatarImg.getAttribute('src') : null;
+        }
+    """
 
     try:
-        before_src = await page.evaluate(
-            """
-            () => {
-                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
-                if (!reactionBtn) return null;
-                const rRect = reactionBtn.getBoundingClientRect();
-                const avatarImg = Array.from(document.querySelectorAll('img'))
-                    .filter(el => {
-                        const r = el.getBoundingClientRect();
-                        if (r.width < 14 || r.width > 40) return false;
-                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
-                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
-                        return sameRow && isLeftOf;
-                    })
-                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-                return avatarImg ? avatarImg.getAttribute('src') : null;
-            }
-            """
-        )
+        before_src = await page.evaluate(_FIND_AVATAR_SRC, post_id)
         if not before_src:
-            print("  [!] Identity-avatar (reaction button ke paas) nahi mila.")
+            print("  [!] Identity-avatar (is post ke reaction button ke paas) nahi mila.")
             return False
 
         avatar_target = await page.evaluate(
             """
-            () => {
-                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+            (postId) => {
+                const post = document.querySelector(`[data-bot-id="${postId}"]`);
+                if (!post) return false;
+                const reactionBtn = post.querySelector('button[aria-label^="Reaction button state"]');
                 if (!reactionBtn) return false;
                 const rRect = reactionBtn.getBoundingClientRect();
                 const avatarImg = Array.from(document.querySelectorAll('img'))
@@ -669,10 +676,11 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
                 }
                 return false;
             }
-            """
+            """,
+            post_id,
         )
         if not avatar_target:
-            print("  [!] Identity-avatar (reaction button ke paas) nahi mila.")
+            print("  [!] Identity-avatar (is post ke reaction button ke paas) nahi mila.")
             return False
 
         await asyncio.sleep(random.uniform(1.5, 2.5))
@@ -718,25 +726,7 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
         await save_el.evaluate(_DISPATCH_CLICK)
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
-        after_src = await page.evaluate(
-            """
-            () => {
-                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
-                if (!reactionBtn) return null;
-                const rRect = reactionBtn.getBoundingClientRect();
-                const avatarImg = Array.from(document.querySelectorAll('img'))
-                    .filter(el => {
-                        const r = el.getBoundingClientRect();
-                        if (r.width < 14 || r.width > 40) return false;
-                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
-                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
-                        return sameRow && isLeftOf;
-                    })
-                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-                return avatarImg ? avatarImg.getAttribute('src') : null;
-            }
-            """
-        )
+        after_src = await page.evaluate(_FIND_AVATAR_SRC, post_id)
 
         if not after_src or after_src == before_src:
             print(f"  [!] Save ke baad bhi identity-avatar nahi badla (switch asar mein nahi aaya).")
@@ -764,12 +754,15 @@ async def run(
     log_dir: Path = LOGS_DIR,
     persona_file: str = "persona.md",
 ):
-    """engage_as set ho to run shuru hote hi 'Comment, react, and repost as'
-    identity us Page per switch karte hain (e.g. company), aur switch fail ho
-    to run abort kar dete hain — galat identity se comment/react hone se
-    behtar hai run hi na ho. engaged_path/log_dir alag rakhne se ek dusra
-    'agent' (dusri identity ke liye) apna khud ka dedup/log history rakh
-    sakta hai, personal watcher ke history se mix hue bina."""
+    """engage_as set ho to har post ke apne identity-switcher se us Page per
+    (e.g. company) switch karte hain — ye per-post state hai, session-wide
+    nahi, is liye ek baar shuru mein switch karna kaafi nahi (sirf pehla post
+    hi us identity se hota, baaki sab personal profile per reh jate). Switch
+    kisi ek post per fail ho to sirf wo post skip hota hai, poora run abort
+    nahi hota — galat identity se comment/react hone se behtar hai wo post hi
+    skip ho. engaged_path/log_dir alag rakhne se ek dusra 'agent' (dusri
+    identity ke liye) apna khud ka dedup/log history rakh sakta hai, personal
+    watcher ke history se mix hue bina."""
     SESSION_DIR.mkdir(exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -836,19 +829,6 @@ async def run(
         await asyncio.sleep(3)
         await page.evaluate("window.scrollBy(0, -400)")
         await asyncio.sleep(2)
-
-        if engage_as:
-            print(f"[*] Engagement identity '{engage_as}' per switch kar rahe hain...")
-            switched = await switch_engage_as(page, engage_as)
-            if not switched:
-                print(
-                    f"\n[!] '{engage_as}' identity per switch nahi ho saka — run "
-                    "yahan rok rahe hain (galat identity se comment/react hone se "
-                    "behtar hai run hi na ho).\n"
-                )
-                input("\nEnter dabao browser band karne ke liye...")
-                await browser.close()
-                return
 
         processed   = 0
         attempt_num = 0
@@ -943,6 +923,18 @@ async def run(
                 attempt_num += 1
                 print(f"[POST {processed + 1}/{MAX_POSTS}]  (attempt #{attempt_num})")
                 print(f"  Preview  : {text[:120].replace(chr(10), ' ')}...")
+
+                if engage_as:
+                    print(f"  Engagement identity '{engage_as}' per switch kar rahe hain...")
+                    switched = await switch_engage_as(page, engage_as, post_id)
+                    if not switched:
+                        print(
+                            f"  [SKIP] '{engage_as}' identity per switch nahi ho saka is post "
+                            "per — galat identity se engage hone se behtar hai post hi skip ho.\n"
+                        )
+                        if processed < MAX_POSTS:
+                            await human_gap()
+                        continue
 
                 reaction = pick_reaction(text)
                 print(f"  Reaction : {reaction}")

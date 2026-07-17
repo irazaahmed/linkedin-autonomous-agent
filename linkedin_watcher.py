@@ -594,14 +594,34 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
     confirm kiya gaya selector chain hai — pehla button[aria-label*="repost
     as"] wala guess kabhi match nahi hua tha kyunke wo control exist hi nahi
     karta."""
+    def _dispatch(el_expr: str) -> str:
+        """Sirf .click() kabhi kabhi custom LinkedIn components ke React
+        handlers ko nahi jagata — pointerdown/mousedown/mouseup/click ka poora
+        sequence dispatch karta hai, jo real user click ke zyada kareeb hai."""
+        return f"""
+            {{
+                const el = {el_expr};
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = {{ bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window }};
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.click();
+                return true;
+            }}
+        """
+
     try:
-        avatar_target = await page.evaluate(
+        before_src = await page.evaluate(
             """
             () => {
                 const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
                 if (!reactionBtn) return null;
                 const rRect = reactionBtn.getBoundingClientRect();
-
                 const avatarImg = Array.from(document.querySelectorAll('img'))
                     .filter(el => {
                         const r = el.getBoundingClientRect();
@@ -611,7 +631,30 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
                         return sameRow && isLeftOf;
                     })
                     .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
-                if (!avatarImg) return null;
+                return avatarImg ? avatarImg.getAttribute('src') : null;
+            }
+            """
+        )
+        if not before_src:
+            print("  [!] Identity-avatar (reaction button ke paas) nahi mila.")
+            return False
+
+        avatar_target = await page.evaluate(
+            """
+            () => {
+                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+                if (!reactionBtn) return false;
+                const rRect = reactionBtn.getBoundingClientRect();
+                const avatarImg = Array.from(document.querySelectorAll('img'))
+                    .filter(el => {
+                        const r = el.getBoundingClientRect();
+                        if (r.width < 14 || r.width > 40) return false;
+                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                        return sameRow && isLeftOf;
+                    })
+                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+                if (!avatarImg) return false;
 
                 const ir = avatarImg.getBoundingClientRect();
                 let node = document.elementFromPoint(ir.left + ir.width / 2, ir.top + ir.height / 2);
@@ -624,7 +667,7 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
                     if (looksClickable) { node.click(); return true; }
                     node = node.parentElement;
                 }
-                return null;
+                return false;
             }
             """
         )
@@ -642,18 +685,65 @@ async def switch_engage_as(page: Page, identity_name: str) -> bool:
             print(f"  [DEBUG] Dialog ka text: {group_text}")
             return False
 
-        await option.evaluate("el => el.click()")
-        await asyncio.sleep(random.uniform(0.5, 1))
+        await option.evaluate(_dispatch("el"))
+        await asyncio.sleep(random.uniform(0.8, 1.3))
 
-        save_btn = page.get_by_role("button", name=re.compile(r"^save$", re.I)).first
-        if await save_btn.count() == 0:
-            print("  [!] Dialog mein Save button nahi mila.")
+        checked = await option.get_attribute("aria-checked")
+        if checked != "true":
+            print(f"  [!] '{identity_name}' radio click ke baad bhi checked nahi hua (aria-checked={checked!r}).")
             return False
 
-        await save_btn.evaluate("el => el.click()")
+        # Save button ko poore page mein nahi, isi dialog ke andar dhoondo —
+        # page-wide 'Save' match kisi aur (unrelated, hidden) button ko bhi
+        # pakad sakta hai.
+        save_btn = await page.evaluate_handle(
+            """
+            () => {
+                let node = document.querySelector('[role="radiogroup"]');
+                for (let i = 0; i < 6 && node; i++) {
+                    const btn = Array.from(node.querySelectorAll('button, [role="button"]'))
+                        .find(b => (b.innerText || '').trim().toLowerCase() === 'save');
+                    if (btn) return btn;
+                    node = node.parentElement;
+                }
+                return null;
+            }
+            """
+        )
+        save_el = save_btn.as_element()
+        if save_el is None:
+            print("  [!] Dialog ke andar Save button nahi mila.")
+            return False
+
+        await save_el.evaluate(_dispatch("el"))
         await asyncio.sleep(random.uniform(1.5, 2.5))
 
-        print(f"  [OK] Engagement identity '{identity_name}' per switch ho gayi.")
+        after_src = await page.evaluate(
+            """
+            () => {
+                const reactionBtn = document.querySelector('button[aria-label^="Reaction button state"]');
+                if (!reactionBtn) return null;
+                const rRect = reactionBtn.getBoundingClientRect();
+                const avatarImg = Array.from(document.querySelectorAll('img'))
+                    .filter(el => {
+                        const r = el.getBoundingClientRect();
+                        if (r.width < 14 || r.width > 40) return false;
+                        const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                        const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                        return sameRow && isLeftOf;
+                    })
+                    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+                return avatarImg ? avatarImg.getAttribute('src') : null;
+            }
+            """
+        )
+
+        if not after_src or after_src == before_src:
+            print(f"  [!] Save ke baad bhi identity-avatar nahi badla (switch asar mein nahi aaya).")
+            print(f"  [DEBUG] before_src={before_src!r} after_src={after_src!r}")
+            return False
+
+        print(f"  [OK] Engagement identity '{identity_name}' per switch ho gayi (avatar badal gaya).")
         return True
 
     except Exception as e:

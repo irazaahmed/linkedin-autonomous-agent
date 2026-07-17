@@ -141,6 +141,49 @@ async def _dump_reaction_button_neighborhood(page, identity_name: str) -> dict:
                 ? Array.from(parent.children).slice(0, 15).map(describe)
                 : [];
 
+            // Pichli run ne ek chhota (24x24) unlabeled <img> reaction button ke
+            // BILKUL left mein pakda (same row, thodi si upar/neeche tolerance) —
+            // ye hi identity-avatar hone ka strongest candidate hai. Uske exact
+            // center point per elementFromPoint chalao aur upar climb karke
+            // sabse kareeb wala CLICKABLE ancestor dhoondo (role/tabindex/
+            // aria-haspopup/cursor:pointer — chahe khud <img> clickable na ho,
+            // uska wrapper hoga).
+            const avatarImg = Array.from(document.querySelectorAll('img'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 14 || r.width > 40) return false;
+                    const sameRow = Math.abs((r.top + r.height / 2) - (rRect.top + rRect.height / 2)) < 20;
+                    const isLeftOf = (r.left + r.width) <= rRect.left + 4;
+                    return sameRow && isLeftOf;
+                })
+                .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0] || null;
+
+            let avatarClickTarget = null;
+            if (avatarImg) {
+                const ir = avatarImg.getBoundingClientRect();
+                const cx = ir.left + ir.width / 2;
+                const cy = ir.top + ir.height / 2;
+                const atPoint = document.elementFromPoint(cx, cy);
+                const chain = [];
+                let node = atPoint;
+                for (let i = 0; i < 6 && node; i++) {
+                    const style = getComputedStyle(node);
+                    chain.push({
+                        ...describe(node),
+                        tabIndex: node.tabIndex,
+                        cursor: style.cursor,
+                        hasOnclickAttr: node.hasAttribute('onclick'),
+                    });
+                    node = node.parentElement;
+                }
+                avatarClickTarget = {
+                    imgSrc: avatarImg.getAttribute('src'),
+                    imgRect: describe(avatarImg).rect,
+                    pointChecked: { x: Math.round(cx), y: Math.round(cy) },
+                    ancestorChain: chain,
+                };
+            }
+
             return {
                 found: true,
                 reactionBtnRect: describe(reactionBtn).rect,
@@ -150,6 +193,7 @@ async def _dump_reaction_button_neighborhood(page, identity_name: str) -> dict:
                 grandparentCls: grandparent ? norm((grandparent.className || '').toString()).slice(0, 200) : null,
                 siblings,
                 nearbyVisuals,
+                avatarClickTarget,
             };
         }
         """

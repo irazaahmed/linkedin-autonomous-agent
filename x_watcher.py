@@ -212,15 +212,16 @@ async def run():
                 "--start-maximized",
             ],
         )
+        # LinkedIn wala hardcoded user-agent aur STEALTH_SCRIPT yahan jaan ke
+        # NAHI lagate: hum asli Chrome (channel="chrome") chala rahe hain, jis
+        # ka apna genuine UA / window.chrome / plugins already hain. Purana
+        # fake UA (Chrome 131) asli engine se mismatch karta tha aur fake
+        # window.chrome skeleton genuine wale se KAM asli lagta hai — X ka
+        # anti-bot yehi pakar ke login ko verification loop me phansa deta
+        # tha (phone number ke baad aagay na barhna).
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
         )
-        await context.add_init_script(lw.STEALTH_SCRIPT)
         await lw.load_cookies(context, COOKIES_FILE)
 
         page = await context.new_page()

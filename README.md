@@ -242,6 +242,14 @@ different rules than LinkedIn's:
 Sessions live in `session/x_cookies.json` (first run: log in once in the
 opened window), logs and dedup in `logs/x/`.
 
+If X's login refuses to complete inside the automated window (it sometimes
+traps automated browsers in an endless phone-verification step), run
+`python x_login_import.py` instead: log in to x.com in your *normal*
+everyday Chrome, copy the `auth_token` cookie from DevTools (Application →
+Cookies → x.com), paste it into the prompt, and the script builds
+`session/x_cookies.json` from it and opens a browser to verify the session
+actually works. After that the watcher never sees a login screen.
+
 ## Dashboard
 
 ```bash

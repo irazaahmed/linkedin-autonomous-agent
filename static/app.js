@@ -33,8 +33,14 @@
   const runSpinner = $("runSpinner");
   const continueBtn = $("continueBtn");
   const stopBtn = $("stopBtn");
-  const runBtns = { personal: $("runPersonal"), cybrum: $("runCybrum") };
-  const AGENT_LABEL = { personal: "Personal Profile", cybrum: "Cybrum Solutions Page" };
+  const runBtns = { personal: $("runPersonal"), cybrum: $("runCybrum"), x: $("runX") };
+  const AGENT_LABEL = { personal: "Personal Profile", cybrum: "Cybrum Solutions Page", x: "X (Twitter)" };
+  const MAX_POSTS_INPUT = { personal: "maxPostsPersonal", cybrum: "maxPostsCybrum", x: "maxPostsX" };
+  const AGENT_CHIP = {
+    personal: { cls: "chip-personal", label: "Personal" },
+    cybrum: { cls: "chip-cybrum", label: "Cybrum" },
+    x: { cls: "chip-x", label: "X" },
+  };
 
   let logsSince = 0;
   let lastStatus = "idle";
@@ -115,7 +121,7 @@
   }
 
   async function runAgent(agent) {
-    const maxPostsEl = $(agent === "personal" ? "maxPostsPersonal" : "maxPostsCybrum");
+    const maxPostsEl = $(MAX_POSTS_INPUT[agent]);
     const max_posts = parseInt(maxPostsEl.value, 10) || undefined;
     for (const btn of Object.values(runBtns)) btn.disabled = true;
     consoleEl.textContent = "";
@@ -134,6 +140,7 @@
 
   runBtns.personal.addEventListener("click", () => runAgent("personal"));
   runBtns.cybrum.addEventListener("click", () => runAgent("cybrum"));
+  runBtns.x.addEventListener("click", () => runAgent("x"));
   stopBtn.addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
   continueBtn.addEventListener("click", () => fetch("/api/continue", { method: "POST" }));
   $("clearConsole").addEventListener("click", () => { consoleEl.textContent = ""; });
@@ -200,8 +207,9 @@
     }
     body.innerHTML = recent.map((r) => {
       const ts = (r.timestamp || "").replace("T", " ").slice(0, 16);
-      const agentCls = r.agent === "cybrum" ? "chip-cybrum" : "chip-personal";
-      const agentTxt = r.agent === "cybrum" ? "Cybrum" : "Personal";
+      const chip = AGENT_CHIP[r.agent] || AGENT_CHIP.personal;
+      const agentCls = chip.cls;
+      const agentTxt = chip.label;
       const emoji = REACTION_EMOJI[r.reaction] || "";
       const statusChip = r.success
         ? "<span class='chip chip-ok'>Posted</span>"
@@ -216,13 +224,15 @@
     }).join("\n");
   }
 
+  const META_EL = { personal: "metaPersonal", cybrum: "metaCybrum", x: "metaX" };
+
   function renderAgentMeta(recent) {
-    const latest = { personal: null, cybrum: null };
+    const latest = { personal: null, cybrum: null, x: null };
     for (const r of recent) {
-      if (!latest[r.agent]) latest[r.agent] = r;
+      if (latest[r.agent] === null) latest[r.agent] = r;
     }
-    for (const agent of ["personal", "cybrum"]) {
-      const el = $(agent === "personal" ? "metaPersonal" : "metaCybrum");
+    for (const agent of ["personal", "cybrum", "x"]) {
+      const el = $(META_EL[agent]);
       const r = latest[agent];
       if (!r) { el.textContent = "No activity yet"; continue; }
       const ts = (r.timestamp || "").replace("T", " ").slice(0, 16);
@@ -240,7 +250,8 @@
     $("statReacted").textContent = stats.reacted;
     $("rateMeter").style.width = `${Math.min(100, stats.success_rate)}%`;
     $("agentBreakdown").textContent =
-      `Personal: ${stats.personal_total} posts   ·   Cybrum: ${stats.cybrum_total} posts`;
+      `Personal: ${stats.personal_total} posts   ·   Cybrum: ${stats.cybrum_total} posts` +
+      `   ·   X: ${stats.x_total || 0} posts`;
     renderCharts(stats);
     renderRecent(stats.recent);
     renderAgentMeta(stats.recent);

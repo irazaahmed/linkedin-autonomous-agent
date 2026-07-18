@@ -62,18 +62,18 @@ STEALTH_SCRIPT = """
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-async def save_cookies(context: BrowserContext):
-    SESSION_DIR.mkdir(exist_ok=True)
+async def save_cookies(context: BrowserContext, cookies_file: Path = COOKIES_FILE):
+    cookies_file.parent.mkdir(parents=True, exist_ok=True)
     cookies = await context.cookies()
-    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+    with open(cookies_file, "w", encoding="utf-8") as f:
         json.dump(cookies, f, indent=2)
     print(f"  [*] Session saved ({len(cookies)} cookies)")
 
 
-async def load_cookies(context: BrowserContext) -> bool:
-    if not COOKIES_FILE.exists():
+async def load_cookies(context: BrowserContext, cookies_file: Path = COOKIES_FILE) -> bool:
+    if not cookies_file.exists():
         return False
-    with open(COOKIES_FILE, encoding="utf-8") as f:
+    with open(cookies_file, encoding="utf-8") as f:
         cookies = json.load(f)
     if not cookies:
         return False

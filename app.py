@@ -17,10 +17,12 @@ from flask import Flask, jsonify, render_template, request
 BASE_DIR = Path(__file__).parent
 LOGS_DIR = BASE_DIR / "logs"
 CYBRUM_LOGS_DIR = LOGS_DIR / "cybrum"
+X_LOGS_DIR = LOGS_DIR / "x"
 
 AGENTS = {
     "personal": {"script": "linkedin_watcher.py", "label": "Personal Profile"},
     "cybrum": {"script": "linkedin_watcher_cybrum.py", "label": "Cybrum Solutions Page"},
+    "x": {"script": "x_watcher.py", "label": "X (Twitter)"},
 }
 
 # The login input() prompt in linkedin_watcher.py blocks the subprocess on
@@ -34,10 +36,11 @@ app = Flask(__name__)
 
 
 class JobManager:
-    """Owns at most one running agent subprocess at a time (both agents share
-    the same LinkedIn browser session, so concurrent runs would fight over
-    it). Reads child stdout char-by-char, not line-by-line, so we can detect
-    an input() prompt even though it has no trailing newline."""
+    """Owns at most one running agent subprocess at a time (the two LinkedIn
+    agents share one browser session, and even the X agent opening a second
+    automated Chrome alongside would be more parallel bot activity than we
+    want). Reads child stdout char-by-char, not line-by-line, so we can
+    detect an input() prompt even though it has no trailing newline."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -183,7 +186,11 @@ def _load_entries(log_dir: Path, agent: str) -> list[dict]:
 
 
 def build_stats() -> dict:
-    entries = _load_entries(LOGS_DIR, "personal") + _load_entries(CYBRUM_LOGS_DIR, "cybrum")
+    entries = (
+        _load_entries(LOGS_DIR, "personal")
+        + _load_entries(CYBRUM_LOGS_DIR, "cybrum")
+        + _load_entries(X_LOGS_DIR, "x")
+    )
 
     total = len(entries)
     successful = sum(1 for e in entries if e.get("success"))
@@ -217,6 +224,7 @@ def build_stats() -> dict:
         "reacted": reacted,
         "personal_total": per_agent.get("personal", 0),
         "cybrum_total": per_agent.get("cybrum", 0),
+        "x_total": per_agent.get("x", 0),
         "reaction_labels": reaction_labels,
         "reaction_values": [reaction_counts[r] for r in reaction_labels],
         "days": days,

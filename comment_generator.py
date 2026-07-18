@@ -85,7 +85,7 @@ LANGUAGE_INSTRUCTIONS = {
 # format rule sirf user prompt mein tha aur llama phir bhi meta-text/fragment
 # de deta tha (ek run mein 8 mein se 3 comment isi wajah se skip hue).
 SYSTEM_PROMPT = (
-    "You write SHORT LinkedIn comments in the voice of the given persona. "
+    "You write SHORT {platform} comments in the voice of the given persona. "
     "Keep every comment brief and use plain, simple, easy words — never long, "
     "never fancy or jargon-heavy. Always write in the SAME language and script "
     "as the post: if the post is Roman Urdu (Urdu in English letters), reply in "
@@ -102,14 +102,18 @@ SYSTEM_PROMPT = (
 )
 
 
-def generate_comment(post_content: str, persona_file: str = "persona.md") -> str:
+def generate_comment(
+    post_content: str,
+    persona_file: str = "persona.md",
+    platform: str = "LinkedIn",
+) -> str:
     persona = load_persona(persona_file)
     length_instruction = LENGTH_INSTRUCTIONS[_pick_comment_length(post_content)]
     language_instruction = LANGUAGE_INSTRUCTIONS[_detect_language(post_content)]
 
     user_prompt = (
         f"{persona}\n\n"
-        f'A LinkedIn post says: "{post_content[:500]}"\n\n'
+        f'A {platform} post says: "{post_content[:500]}"\n\n'
         f"Write ONLY the comment text this persona would post in reply. "
         f"{language_instruction} {length_instruction}"
     )
@@ -124,7 +128,7 @@ def generate_comment(post_content: str, persona_file: str = "persona.md") -> str
             response = _get_client().chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": SYSTEM_PROMPT.format(platform=platform)},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.8,

@@ -196,19 +196,51 @@ python linkedin_watcher_cybrum.py
 
 A second entry point that reuses every bit of `linkedin_watcher.py`'s scan/
 react/comment logic (so any future DOM fix lands in both at once — see
-[Engineering challenges solved](#engineering-challenges-solved)) but, right
-after the feed loads, drives LinkedIn's own **"Comment, react, and repost
-as"** picker (the small identity switcher next to a post's like count) to
-switch engagement to a Page you admin (`ENGAGE_AS_PAGE` in `.env`, default
-`Cybrum Solutions`) before scanning a single post. If that switch can't be
-confirmed, the run aborts immediately instead of risking a comment going out
-under the wrong identity.
+[Engineering challenges solved](#engineering-challenges-solved)) but drives
+LinkedIn's own **"Comment, react, and repost as"** picker (the small identity
+switcher next to a post's like count) to switch engagement to a Page you
+admin (`ENGAGE_AS_PAGE` in `.env`, default `Cybrum Solutions`). The switch
+runs **per post**, right before each react/comment — LinkedIn stores that
+identity as per-post state, not session-wide. If the switch can't be
+*verified* on a post (the switcher avatar must visibly change), that post is
+skipped instead of risking a comment going out under the wrong identity.
 
 It writes to `logs/cybrum/` with its own `engaged.json`, so its dedup history
 never mixes with the personal watcher's — the same post can legitimately get
 a personal reply from you *and* an official reply from the company, tracked
 independently. It also uses a separate `persona_cybrum.md` — a company "we"
 voice instead of the personal CEO "I" voice — instead of `persona.md`.
+
+## X (Twitter) agent
+
+```bash
+python x_watcher.py
+```
+
+The same idea pointed at X's home timeline: scan tweets, skip ads and
+anything already engaged, **like + short reply** on relevant ones (same
+relevance filter as LinkedIn), with the same 50–90s human pacing. It shares
+the Groq comment generator (via a `platform` parameter so the prompt says
+"X post", with a separate `persona_x.md` builder voice and a 280-character
+guard) but is otherwise its own Playwright script, because X's DOM plays by
+different rules than LinkedIn's:
+
+- **Stable selectors for free.** X ships `data-testid` on everything
+  (`tweet`, `tweetText`, `like`/`unlike`, `reply`, `tweetTextarea_0`,
+  `tweetButton`) and every tweet has a permanent `/status/<id>` link — so
+  the tweet ID is the dedup key and there's no need for LinkedIn-style
+  content fingerprinting or `data-bot-id` tagging.
+- **Virtualized timeline.** X removes off-screen tweets from the DOM as you
+  scroll, so the watcher never holds an element reference across a scroll —
+  every action re-finds its tweet by status ID (`article:has(a[href*=
+  "/status/<id>"])`) first.
+- **Verification-first, as always**: a like only counts when the button
+  flips to `unlike`; a reply only counts when the composer modal actually
+  closes after Post. A failed reply gets its draft discarded (Escape +
+  confirm) rather than left blocking the page.
+
+Sessions live in `session/x_cookies.json` (first run: log in once in the
+opened window), logs and dedup in `logs/x/`.
 
 ## Dashboard
 
@@ -221,21 +253,22 @@ only, no auth, single-user by design. It replaces running `run.bat` /
 `python linkedin_watcher_cybrum.py` from a terminal:
 
 - **Run / Stop buttons** for each agent (Personal Profile, Cybrum Solutions
-  Page), with a per-run "posts this run" override (passed to the subprocess
-  as `MAX_POSTS`, doesn't touch `.env`).
-- **Live console** streaming the agent's stdout in real time. The agent's
-  end-of-run `input()` prompt (used to keep the browser open for review from
-  a terminal) is answered automatically so the browser closes and the UI
-  returns to idle on its own. The one-time first-login prompt is *not*
-  auto-answered — the dashboard shows an **"I've logged in — continue"**
-  button once it detects that prompt, so the run only proceeds after you've
-  actually completed the Google login in the visible Chrome window.
+  Page, X), with a per-run "posts this run" override (passed to the
+  subprocess as `MAX_POSTS`, doesn't touch `.env`).
+- **Live console** streaming the agent's stdout in real time. When launched
+  from the dashboard the agents skip their end-of-run "press Enter to close"
+  prompt entirely (it only makes sense in a terminal) and close the browser
+  on their own. The one-time first-login prompt is *not* skipped — the
+  dashboard shows an **"I've logged in — continue"** button once it detects
+  that prompt, so the run only proceeds after you've actually completed the
+  login in the visible Chrome window.
 - **Activity charts** (daily volume, reaction breakdown) and a recent-comments
-  table, aggregating both agents' `logs/` directories — same data
+  table, aggregating all agents' `logs/` directories — same data
   `generate_dashboard.py` reads, just live instead of a static export.
 
-Only one agent runs at a time — both share the same LinkedIn browser session,
-so concurrent runs would fight over it.
+Only one agent runs at a time — the LinkedIn agents share one browser
+session, and running a second automated browser in parallel is more bot
+footprint than this project wants anyway.
 
 `python generate_dashboard.py` still works standalone if you just want a
 static, shareable `dashboard.html` snapshot (gitignored, since it embeds real

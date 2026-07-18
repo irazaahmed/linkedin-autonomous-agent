@@ -15,6 +15,7 @@
   --shadow-sm:      0 2px 10px rgba(0,0,0,0.35);
   --glow-blue:      rgba(57,135,229,0.18);
   --glow-aqua:      rgba(25,158,112,0.16);
+  --glow-violet:    rgba(144,133,233,0.16);
 
   --series-blue:    #3987e5;
   --series-blue-2:  #1c5cab;
@@ -23,6 +24,7 @@
   --series-yellow:  #c98500;
   --series-green:   #008300;
   --series-violet:  #9085e9;
+  --series-violet-2:#5b50c0;
   --series-red:     #e66767;
   --series-magenta: #d55181;
   --series-orange:  #d95926;
@@ -49,6 +51,7 @@
     --shadow-sm:      0 2px 10px rgba(11,11,11,0.06);
     --glow-blue:      rgba(42,120,214,0.12);
     --glow-aqua:      rgba(27,175,122,0.12);
+    --glow-violet:    rgba(74,58,167,0.12);
 
     --series-blue:    #2a78d6;
     --series-blue-2:  #1c5cab;
@@ -57,6 +60,7 @@
     --series-yellow:  #eda100;
     --series-green:   #008300;
     --series-violet:  #4a3aa7;
+    --series-violet-2:#372b80;
     --series-red:     #e34948;
     --series-magenta: #e87ba4;
     --series-orange:  #eb6834;
@@ -143,7 +147,8 @@ main {
 .pill-stopped   { background: rgba(236,131,90,0.14); color: var(--status-serious); }
 
 /* ── Agent cards ─────────────────────────────────────────────────────── */
-.agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.agent-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+@media (max-width: 1100px) { .agent-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 760px) { .agent-grid { grid-template-columns: 1fr; } }
 
 .agent-card {
@@ -162,6 +167,7 @@ main {
 }
 .card-personal::before { background: linear-gradient(90deg, var(--series-blue), var(--series-blue-2)); }
 .card-cybrum::before   { background: linear-gradient(90deg, var(--series-aqua), var(--series-aqua-2)); }
+.card-x::before        { background: linear-gradient(90deg, var(--series-violet), var(--series-violet-2)); }
 .agent-card:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow);
@@ -178,6 +184,7 @@ main {
 .agent-avatar svg { width: 22px; height: 22px; }
 .avatar-personal { background: linear-gradient(135deg, var(--series-blue), var(--series-blue-2)); }
 .avatar-cybrum   { background: linear-gradient(135deg, var(--series-aqua), var(--series-aqua-2)); }
+.avatar-x        { background: linear-gradient(135deg, var(--series-violet), var(--series-violet-2)); }
 .agent-card h3 { margin: 2px 0 4px; font-size: 16px; }
 .agent-desc { color: var(--text-secondary); font-size: 13px; margin: 0; }
 
@@ -239,6 +246,11 @@ main {
   background: linear-gradient(135deg, var(--series-aqua), var(--series-aqua-2));
   color: #fff;
   box-shadow: 0 4px 14px var(--glow-aqua);
+}
+.btn-x {
+  background: linear-gradient(135deg, var(--series-violet), var(--series-violet-2));
+  color: #fff;
+  box-shadow: 0 4px 14px var(--glow-violet);
 }
 .btn-warn   { background: var(--status-warning); color: #1a1a19; flex: none; }
 .btn-danger { background: var(--status-critical); color: #fff; flex: none; }
@@ -444,6 +456,7 @@ td.comment-cell { max-width: 420px; }
 .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .chip-personal { background: rgba(57,135,229,0.13); color: var(--series-blue); }
 .chip-cybrum   { background: rgba(25,158,112,0.13); color: var(--series-aqua); }
+.chip-x        { background: rgba(144,133,233,0.13); color: var(--series-violet); }
 .chip-ok   { background: rgba(12,163,12,0.13); color: var(--status-good); }
 .chip-fail { background: rgba(208,59,59,0.13); color: var(--status-critical); }
 

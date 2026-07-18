@@ -4,6 +4,7 @@ import os
 import random
 import json
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -1189,7 +1190,13 @@ async def run(
         print(f"  Log: {log_dir}/{datetime.now().strftime('%Y-%m-%d')}.json")
         print("=" * 55)
 
-        input("\nEnter dabao browser band karne ke liye...")
+        # Dashboard (piped stdin) se chale to prompt ka koi faida nahi — koi
+        # Enter dabane wala terminal hai hi nahin. Sirf interactive terminal
+        # me poochho, warna seedha band karo.
+        if sys.stdin.isatty():
+            input("\nEnter dabao browser band karne ke liye...")
+        else:
+            print("\nBrowser band ho raha hai...")
         await browser.close()
 
 

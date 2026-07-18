@@ -23,11 +23,12 @@ AGENTS = {
     "cybrum": {"script": "linkedin_watcher_cybrum.py", "label": "Cybrum Solutions Page"},
 }
 
-# input() prompts in linkedin_watcher.py that block the subprocess on stdin —
-# matched as substrings against the not-yet-newline-terminated tail of stdout
-# so we can react before a full line is even flushed.
+# The login input() prompt in linkedin_watcher.py blocks the subprocess on
+# stdin — matched as a substring against the not-yet-newline-terminated tail
+# of stdout so we can react before a full line is even flushed. (The old
+# end-of-run close prompt is skipped entirely when stdin is a pipe, so only
+# the login prompt needs handling here.)
 LOGIN_PROMPT_MARKER = "jab feed pe ho"
-CLOSE_PROMPT_MARKER = "browser band karne"
 
 app = Flask(__name__)
 
@@ -119,14 +120,6 @@ class JobManager:
                 buf = ""
                 with self.lock:
                     self.status = "waiting_login"
-            elif CLOSE_PROMPT_MARKER in buf:
-                self._push_line(buf)
-                buf = ""
-                try:
-                    proc.stdin.write("\n")
-                    proc.stdin.flush()
-                except Exception:
-                    pass
 
         if buf:
             self._push_line(buf)

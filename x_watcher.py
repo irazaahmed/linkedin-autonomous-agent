@@ -13,6 +13,7 @@ bhi ElementHandle ko scrolls ke paar hold nahi karte; har action se pehle
 tweet ko uske status-id se (CSS `:has()`) dobara dhundhte hain."""
 
 import asyncio
+import json
 import random
 import sys
 from datetime import datetime, timezone
@@ -25,7 +26,8 @@ import linkedin_watcher as lw
 from comment_generator import generate_comment
 
 X_HOME       = "https://x.com/home"
-COOKIES_FILE = lw.SESSION_DIR / "x_cookies.json"
+PROFILE_DIR  = lw.SESSION_DIR / "x_profile"   # dedicated persistent Chrome profile
+COOKIES_FILE = lw.SESSION_DIR / "x_cookies.json"  # sirf x_login_import.py fallback ke liye
 LOG_DIR      = Path("logs/x")
 ENGAGED_FILE = LOG_DIR / "engaged.json"
 PERSONA_FILE = "persona_x.md"
@@ -201,53 +203,64 @@ async def run():
     print("=" * 55 + "\n")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
+        # X ke liye launch_persistent_context — apna dedicated asli Chrome
+        # profile (session/x_profile) jo disk par run-to-run zinda rehta hai.
+        # Ephemeral incognito-jaisi context X ka anti-bot foran pakar leta
+        # tha (login phone-verification loop me phans jata tha); persistent
+        # profile asli browser jaisa fingerprint deta hai. Login LinkedIn ki
+        # tarah sirf EK baar isi window me hota hai — wahan cookies-file
+        # session save karti thi, yahan poora Chrome profile.
+        context = await p.chromium.launch_persistent_context(
+            str(PROFILE_DIR),
             headless=lw.HEADLESS,
             channel="chrome",
+            viewport={"width": 1280, "height": 900},
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-infobars",
-                "--start-maximized",
             ],
         )
-        # LinkedIn wala hardcoded user-agent aur STEALTH_SCRIPT yahan jaan ke
-        # NAHI lagate: hum asli Chrome (channel="chrome") chala rahe hain, jis
-        # ka apna genuine UA / window.chrome / plugins already hain. Purana
-        # fake UA (Chrome 131) asli engine se mismatch karta tha aur fake
-        # window.chrome skeleton genuine wale se KAM asli lagta hai — X ka
-        # anti-bot yehi pakar ke login ko verification loop me phansa deta
-        # tha (phone number ke baad aagay na barhna).
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-        )
-        await lw.load_cookies(context, COOKIES_FILE)
+        # x_login_import.py (fallback tool) se banai cookies pari hon to
+        # profile me daal do — dono raste ek hi session par pahunchte hain.
+        if COOKIES_FILE.exists():
+            try:
+                await context.add_cookies(
+                    json.loads(COOKIES_FILE.read_text(encoding="utf-8"))
+                )
+                print("  [*] Imported cookies profile me load ho gain.")
+            except Exception:
+                pass
 
-        page = await context.new_page()
+        page = context.pages[0] if context.pages else await context.new_page()
         print("[*] Opening X...")
         await page.goto(X_HOME, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(5)
         print(f"[*] URL: {page.url}\n")
 
-        if not is_logged_in(page.url):
-            if COOKIES_FILE.exists():
-                COOKIES_FILE.unlink()
-                print("[!] Purani X cookies delete — fresh login hoga.")
+        tries = 0
+        while not is_logged_in(page.url) and tries < 3:
+            if tries == 0:
+                await page.goto("https://x.com/i/flow/login",
+                                wait_until="domcontentloaded", timeout=60000)
             print("─" * 55)
-            print("  X khul gaya hai. Apne account se login karo.")
+            print("  X khul gaya hai. Isi window me apne account se login karo.")
             print("  Home timeline pe aane ke baad yahan ENTER dabao.")
             print("─" * 55)
             # NOTE: prompt me "jab feed pe ho" dashboard ka LOGIN_PROMPT_MARKER
             # hai — change karna ho to app.py bhi update karo.
             input("\n  >> Enter (jab feed pe ho): ")
-            await lw.save_cookies(context, COOKIES_FILE)
-            if not is_logged_in(page.url):
-                await page.goto(X_HOME, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(5)
-        else:
-            print("[*] Session valid — home timeline pe aa gaye!\n")
-            await lw.save_cookies(context, COOKIES_FILE)
+            await page.goto(X_HOME, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+            tries += 1
+
+        if not is_logged_in(page.url):
+            print("[!] Login complete nahi hua — run band kar rahe hain.")
+            await context.close()
+            return
+        print("[*] Login valid — home timeline pe aa gaye! (Profile saved —")
+        print("    agli runs me login nahi poochhega.)\n")
 
         print("[*] Tweets load hone ka wait kar raha hun...")
         await asyncio.sleep(4)
@@ -349,7 +362,7 @@ async def run():
             input("\nEnter dabao browser band karne ke liye...")
         else:
             print("\nBrowser band ho raha hai...")
-        await browser.close()
+        await context.close()
 
 
 if __name__ == "__main__":

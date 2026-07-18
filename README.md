@@ -239,16 +239,18 @@ different rules than LinkedIn's:
   closes after Post. A failed reply gets its draft discarded (Escape +
   confirm) rather than left blocking the page.
 
-Sessions live in `session/x_cookies.json` (first run: log in once in the
-opened window), logs and dedup in `logs/x/`.
+The session lives in `session/x_profile/` — a dedicated persistent Chrome
+profile, not a cookies file. First run: log in once in the opened window
+(same one-time flow as LinkedIn); after that the profile keeps you logged
+in. A persistent profile is also what makes the login *work*: X's anti-bot
+traps ephemeral automated contexts in an endless phone-verification step,
+but a real on-disk profile looks like a real browser. Logs and dedup live
+in `logs/x/`.
 
-If X's login refuses to complete inside the automated window (it sometimes
-traps automated browsers in an endless phone-verification step), run
-`python x_login_import.py` instead: log in to x.com in your *normal*
-everyday Chrome, copy the `auth_token` cookie from DevTools (Application →
-Cookies → x.com), paste it into the prompt, and the script builds
-`session/x_cookies.json` from it and opens a browser to verify the session
-actually works. After that the watcher never sees a login screen.
+If the login still won't complete, `python x_login_import.py` is the
+fallback: log in to x.com in your normal everyday Chrome, copy the
+`auth_token` cookie from DevTools (Application → Cookies → x.com), paste it
+into the prompt — the watcher folds it into the profile on next run.
 
 ## Dashboard
 

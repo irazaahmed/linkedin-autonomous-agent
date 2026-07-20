@@ -247,10 +247,18 @@ traps ephemeral automated contexts in an endless phone-verification step,
 but a real on-disk profile looks like a real browser. Logs and dedup live
 in `logs/x/`.
 
-If the login still won't complete, `python x_login_import.py` is the
-fallback: log in to x.com in your normal everyday Chrome, copy the
-`auth_token` cookie from DevTools (Application → Cookies → x.com), paste it
-into the prompt — the watcher folds it into the profile on next run.
+If X still hardens the login inside the automated window (asks for a phone
+number instead of a password and refuses to continue — it can detect
+Chrome's automation flags), run `python x_manual_login.py` once instead: it
+opens the *same* `session/x_profile/` in a plain, flag-free Chrome where
+login behaves normally. Log in there, close that window, and the watcher
+picks up the session on its next run. Tip: signing in with your @username
+instead of email often skips the phone-verification step entirely.
+
+Last-resort fallback: `python x_login_import.py` — log in to x.com in your
+normal everyday Chrome, copy the `auth_token` cookie from DevTools
+(Application → Cookies → x.com), paste it into the prompt — the watcher
+folds it into the profile on next run.
 
 ## Dashboard
 

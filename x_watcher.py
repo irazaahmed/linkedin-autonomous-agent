@@ -210,8 +210,11 @@ async def run():
         # profile asli browser jaisa fingerprint deta hai. Login LinkedIn ki
         # tarah sirf EK baar isi window me hota hai — wahan cookies-file
         # session save karti thi, yahan poora Chrome profile.
+        # Path ABSOLUTE hona zaroori hai: relative --user-data-dir ko naya
+        # Chrome (136+) default-profile samajh kar remote debugging block kar
+        # deta hai aur launch hote hi band ho jata hai (TargetClosedError).
         context = await p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
+            str(PROFILE_DIR.resolve()),
             headless=lw.HEADLESS,
             channel="chrome",
             viewport={"width": 1280, "height": 900},

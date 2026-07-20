@@ -113,14 +113,26 @@ def find_tweet(page: Page, tweet_id: str):
 
 async def close_composer(page: Page):
     """Reply modal ko discard karo (fail hone par) — Escape, aur agar X
-    'Discard?' confirmation dikhaye to usay bhi confirm karo."""
+    'Discard?' confirmation dikhaye to usay bhi confirm karo. Aakhir me VERIFY
+    karte hain ke dialog sach me DOM se hat gaya — agar Escape kaam nahi aaya
+    (focus dialog ke andar nahi tha) to dialog ka apna close button try karte
+    hain. Ye zaroori hai: ek chhoda hua open dialog agli reply ke
+    tweetTextarea_0 locator ko home-composer ke sath collide kara deta hai
+    (2 elements strict-mode error)."""
+    dialog = page.locator('div[role="dialog"]').last
     try:
         await page.keyboard.press("Escape")
         await asyncio.sleep(0.8)
         confirm = page.locator('[data-testid="confirmationSheetConfirm"]')
         if await confirm.count():
-            await confirm.first.click()
+            await confirm.last.click()
             await asyncio.sleep(0.5)
+        if await dialog.count():
+            close_btn = dialog.locator('[data-testid="app-bar-close"]')
+            if await close_btn.count():
+                await close_btn.first.click(timeout=3000)
+                await asyncio.sleep(0.5)
+        await dialog.wait_for(state="hidden", timeout=5000)
     except Exception:
         pass
 
@@ -154,12 +166,25 @@ async def reply_to_tweet(page: Page, tweet_id: str, reply_text: str) -> bool:
     """Reply button -> modal composer -> type -> Post -> VERIFY. Success ka
     signal: composer textarea DOM se detach ho jata hai (modal band). Fail ho
     to composer discard kar ke False — adhoora draft khula nahi chhodte."""
+    # Pichli reply ka dialog agar kisi wajah se khula reh gaya ho (crash,
+    # scroll wagera), to woh home-timeline ke apne "What's happening?"
+    # composer ke sath is location ko collide karwa deta hai — pehle saaf.
+    if await page.locator('div[role="dialog"]').count():
+        await close_composer(page)
+
     art = find_tweet(page, tweet_id)
     try:
         await art.scroll_into_view_if_needed(timeout=8000)
         await art.locator('[data-testid="reply"]').first.click(timeout=8000)
 
-        box = page.locator('[data-testid="tweetTextarea_0"]')
+        # X reply ko ek modal dialog me kholta hai jiske andar apna
+        # tweetTextarea_0 hota hai. Bina dialog-scope kiye ye locator home
+        # feed ke upar wale "What's happening?" composer se bhi match kar
+        # jata hai — kabhi galat box me type hota hai, kabhi 2-element
+        # strict-mode error. .last = sabse recent (topmost) khula dialog.
+        dialog = page.locator('div[role="dialog"]').last
+        await dialog.wait_for(state="visible", timeout=10000)
+        box = dialog.locator('[data-testid="tweetTextarea_0"]')
         await box.wait_for(state="visible", timeout=10000)
         await box.click()
         await asyncio.sleep(random.uniform(0.5, 1.0))
@@ -171,7 +196,7 @@ async def reply_to_tweet(page: Page, tweet_id: str, reply_text: str) -> bool:
             await asyncio.sleep(random.uniform(0.03, 0.10))
         await asyncio.sleep(random.uniform(0.8, 1.5))
 
-        post_btn = page.locator('[data-testid="tweetButton"]').first
+        post_btn = dialog.locator('[data-testid="tweetButton"]').first
         if await post_btn.is_disabled():
             print("  [!] Post button disabled (char limit ya restriction) — discard.")
             await close_composer(page)
